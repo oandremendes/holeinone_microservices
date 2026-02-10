@@ -1,0 +1,411 @@
+{
+  "project": "Invoice Classification System",
+  "description": "Automated invoice classification for scanned documents from ScanSnap ix-1600",
+  "created": "2026-02-01",
+  "last_updated": "2026-02-03",
+
+  "sessions": [
+    {
+      "date": "2026-02-03",
+      "session": 5,
+      "summary": "Added automatic processing, new suppliers, improved date extraction, Docupipe workflows",
+      "tasks_completed": [
+        "Implemented systemd timer for automatic invoice processing (every 1 min for testing)",
+        "Added multi-folder monitoring (ScanSnap + Receipts)",
+        "Added Docupipe workflow support for Makro and Pingo Doce",
+        "Added new suppliers: makro, pingodoce, lidl, inframoura, teofilo_nc",
+        "Improved date extraction with Portuguese month abbreviations (DD - MMM - YYYY)",
+        "Added single-digit date support and US/EU format auto-detection",
+        "Added header-region OCR fallback for invoices with dates in tables",
+        "Added --output-dir option for custom MATCHED/REVIEW locations",
+        "Fixed a4tabacaria keyword false positives",
+        "Renamed misclassified inframoura files"
+      ],
+      "new_suppliers": {
+        "supermarkets": ["makro", "pingodoce", "lidl"],
+        "utilities": ["inframoura"],
+        "document_types": ["teofilo_nc"]
+      },
+      "docupipe_workflows": {
+        "makro": "jtVquUzt",
+        "pingodoce": "PRtYtwC7"
+      },
+      "date_formats_added": [
+        "DD - MMM - YYYY (Portuguese months: jan, fev, mar, etc.)",
+        "Single-digit day/month (2/16/2025)",
+        "YYYY/MM/DD format"
+      ],
+      "systemd_timer": {
+        "service": "~/.config/systemd/user/invoice-classifier.service",
+        "timer": "~/.config/systemd/user/invoice-classifier.timer",
+        "script": "process_invoices.sh",
+        "interval": "1 minute (testing)",
+        "folders_monitored": ["~/GoogleDrive/ScanSnap/", "~/GoogleDrive/ScanSnap/Receipts/"]
+      }
+    },
+    {
+      "date": "2026-02-02",
+      "session": 4,
+      "summary": "Implemented Docupipe API integration for receipt uploads",
+      "tasks_completed": [
+        "Created docupipe_client.py with base64 file upload",
+        "Updated api_config.py with Docupipe API key and base URL",
+        "Added workflow_id support to APIRoute dataclass",
+        "Updated classifier.py to route uploads to correct provider (Parseur/Docupipe)",
+        "Updated config.example.json with docupipe section",
+        "Tested upload with live receipt - successful (doc_id: AbnulHyC)",
+        "Updated README with dual API documentation"
+      ],
+      "docupipe_integration": {
+        "base_url": "https://app.docupipe.ai",
+        "auth_header": "X-API-Key",
+        "upload_endpoint": "POST /document",
+        "payload_format": "JSON with base64-encoded file contents",
+        "response": "documentId and jobId for tracking"
+      },
+      "test_results": {
+        "file": "Overseas.pdf",
+        "supplier": "overseas",
+        "document_id": "AbnulHyC",
+        "status": "success"
+      }
+    },
+    {
+      "date": "2026-02-02",
+      "session": 3,
+      "summary": "Added 50+ receipt suppliers with Docupipe routing",
+      "tasks_completed": [
+        "Analyzed 183 receipts from invoices_test/ folder",
+        "Identified NIF patterns for 40+ new suppliers",
+        "Added teofilo_gd supplier type for Teófilo Guia de Devolução documents",
+        "Added special NIF handling for same-NIF different-document-type cases",
+        "Added all receipt suppliers to classifier with Docupipe routing",
+        "Fixed NIF validation to skip empty/short NIFs",
+        "Updated api_config.py with 60+ supplier routes",
+        "Updated README with expanded supplier documentation"
+      ],
+      "new_suppliers": {
+        "supplier_documents": ["teofilo_gd", "magniberia"],
+        "supermarkets": ["intermarche", "continente", "overseas"],
+        "gas_stations": ["galp", "cepsa", "moeve", "bp", "makro_gas"],
+        "retail": ["worten", "ikea", "leroy", "staples", "action", "note", "wells", "partyland", "kiabi"],
+        "fast_food": ["mcdonalds", "burgerking", "pizzahut", "dominos"],
+        "restaurants": ["mourapao", "matchpoint", "tribulum", "zorba", "sinfonia", "apaisagem", "eurolatina", "anticapizzeria", "italianrepublic", "reichurrasco", "solarfarelo", "botanico", "adegamonte", "afamilia", "artisan", "bagga", "maxidrive", "padoca", "osakasushi"],
+        "hardware": ["constamarina", "constantino", "papelnet", "gildadasilva"],
+        "tolls_parking": ["brisa", "brisatoll", "alparques"],
+        "shopping": ["seminoshopping", "orientalshopping", "shoppingloule", "a4tabacaria"]
+      },
+      "test_results": {
+        "folder": "invoices_test/",
+        "total_receipts": 183,
+        "matched": 164,
+        "review": 18,
+        "accuracy": "90%"
+      },
+      "decisions_made": [
+        {
+          "decision": "Route all receipts to Docupipe instead of Parseur",
+          "rationale": "Receipts need different OCR extraction than supplier invoices"
+        },
+        {
+          "decision": "Create teofilo_gd as separate supplier type",
+          "rationale": "Same company (Teófilo) but different document type (Guia de Devolução) needs different routing"
+        },
+        {
+          "decision": "Use keyword matching for suppliers without reliable NIF",
+          "rationale": "Some receipts don't have company NIF visible, or have client NIF instead"
+        }
+      ]
+    },
+    {
+      "date": "2026-02-02",
+      "session": 2,
+      "summary": "Implemented rclone/Google Drive integration for ScanSnap",
+      "tasks_completed": [
+        "Installed rclone for Google Drive mounting",
+        "Configured rclone with Google Cloud Service Account (portable credentials)",
+        "Set up service account authentication (works on headless servers)",
+        "Mounted Google Drive with shared folder support (--drive-shared-with-me)",
+        "Created MATCHED and REVIEW folders in Google Drive/ScanSnap",
+        "Tested classifier with mounted Google Drive - successful dry-run",
+        "Created systemd user service for auto-mount on boot",
+        "Enabled user lingering for service persistence",
+        "Updated README with rclone setup instructions"
+      ],
+      "rclone_setup": {
+        "remote_name": "gdrive",
+        "auth_method": "service_account",
+        "service_account": "invoice-classifier@odoo-462218.iam.gserviceaccount.com",
+        "key_file": "drivek.json",
+        "mount_point": "~/GoogleDrive",
+        "shared_folder": "ScanSnap",
+        "systemd_service": "~/.config/systemd/user/rclone-gdrive.service",
+        "mount_flags": "--drive-shared-with-me --vfs-cache-mode full"
+      },
+      "decisions_made": [
+        {
+          "decision": "Use Google Cloud Service Account instead of OAuth",
+          "rationale": "Service accounts work on headless servers without browser, credentials are portable between machines, and tokens don't expire"
+        },
+        {
+          "decision": "Use systemd user service instead of system service",
+          "rationale": "Doesn't require root, runs in user context, easier to manage"
+        }
+      ]
+    },
+    {
+      "date": "2026-02-02",
+      "session": 1,
+      "summary": "Added new supplier, tested on real invoices, implemented Parseur API integration",
+      "tasks_completed": [
+        "Added Magnibéria/VENKO Solutions supplier (NIF: 515102334) - technical services",
+        "Added command-line argument support for custom source folders",
+        "Tested on invoices_test/ folder with 24 real invoices",
+        "Successfully processed all 24 invoices (100% classification)",
+        "Verified file renaming and moving to MATCHED/ folder works correctly",
+        "Implemented Parseur API integration for OCR data extraction",
+        "Created api_config.py with supplier → mailbox routing table",
+        "Created parseur_client.py for API communication",
+        "Added --upload flag to process command",
+        "Created config.json for API key storage (excluded from git)",
+        "Updated .gitignore to exclude config.json"
+      ],
+      "parseur_integration": {
+        "supplier_mailboxes": {
+          "soares": "111948",
+          "justdrinks": "112442",
+          "novadis": "111943",
+          "garcias": "112445",
+          "teofilo": "112431",
+          "jmv": "112446",
+          "absolutlyvintage": "112448",
+          "magniberia": "docupipe (not implemented)"
+        }
+      },
+      "test_results": {
+        "folder": "invoices_test/",
+        "total_invoices": 24,
+        "classified": 24,
+        "unknown": 0,
+        "with_dates": 16,
+        "without_dates": 8,
+        "breakdown": {
+          "soares": 9,
+          "teofilo": 8,
+          "novadis": 3,
+          "magniberia": 2,
+          "jmv": 1,
+          "garcias": 1
+        }
+      }
+    },
+    {
+      "date": "2026-02-01",
+      "summary": "Initial development - built complete classification system",
+      "tasks_completed": [
+        "Analyzed 6 sample invoices from different suppliers to understand formats",
+        "Created InvoiceClassifier class with multiple classification methods",
+        "Implemented NIF (tax ID) matching as primary classifier - 95% confidence",
+        "Implemented keyword matching as fallback classifier",
+        "Implemented template matching using SSIM for visual comparison",
+        "Added date extraction from OCR text with priority for issue date over due date",
+        "Created file renaming logic: YYYYMMDD_Supplier.pdf format",
+        "Added file organization: MATCHED/ and REVIEW/ folders",
+        "Handled duplicate filenames with counter suffix",
+        "Added dry-run mode for safe testing",
+        "Tested on 151 sample invoices - achieved 100% classification accuracy"
+      ],
+      "decisions_made": [
+        {
+          "decision": "Use NIF as primary classification method",
+          "rationale": "Portuguese tax IDs are unique and always present on invoices, providing highly reliable identification"
+        },
+        {
+          "decision": "Extract earliest date avoiding 'vencimento' context",
+          "rationale": "Invoice dates appear multiple times; due date (vencimento) is typically 15+ days after issue date"
+        },
+        {
+          "decision": "Use YYYYMMDD format for filenames",
+          "rationale": "Allows chronological sorting in file managers"
+        },
+        {
+          "decision": "Capitalize supplier names in filenames",
+          "rationale": "Better readability: Soares, Teofilo, Garcias instead of lowercase"
+        }
+      ],
+      "issues_encountered": [
+        {
+          "issue": "SOARES invoices were extracting due date instead of issue date",
+          "solution": "Added date filtering to avoid dates near 'vencimento/pagamento' keywords and take earliest date",
+          "status": "resolved"
+        },
+        {
+          "issue": "Some invoices (3-4 SOARES) couldn't extract date due to OCR quality",
+          "solution": "Fallback to 2026XXXX_Supplier.pdf format when date not found",
+          "status": "acceptable"
+        }
+      ]
+    }
+  ],
+
+  "suppliers": {
+    "teofilo": {
+      "display_name": "Estabelecimentos Teófilo Fontainhas Neto",
+      "nif": "500099871",
+      "invoice_format": "Digital PDF, clean layout, stylized logo top-left",
+      "sample_count": 38,
+      "notes": "CO2 bottles and beverages supplier from São Bartolomeu de Messines"
+    },
+    "soares": {
+      "display_name": "Garrafeira Soares",
+      "nif": "501496912",
+      "invoice_format": "Digital PDF, SOARES logo with 40 ANOS badge, many store addresses at bottom",
+      "sample_count": 61,
+      "notes": "Wine and spirits, multiple store locations in Algarve"
+    },
+    "garcias": {
+      "display_name": "Garcias S.A.",
+      "nif": "501141243",
+      "invoice_format": "Digital PDF, crown logo, Multibanco payment box, eic/CECSEC badges",
+      "sample_count": 16,
+      "notes": "Wine and spirits from Algoz, includes IEC (alcohol tax) breakdown"
+    },
+    "jmv": {
+      "display_name": "Jose Maria Vieira S.A.",
+      "nif": "503858471",
+      "invoice_format": "Receipt-style, plain text with dashed lines, large QR code at bottom",
+      "sample_count": 12,
+      "notes": "Coffee supplier (Torrie brand) from Rio Tinto"
+    },
+    "justdrinks": {
+      "display_name": "Justdrinks Lda",
+      "nif": "508976464",
+      "invoice_format": "Digital PDF, circular logo, clean structured table",
+      "sample_count": 7,
+      "notes": "Beer kegs (Peroni, Coors) and beverages from Loulé"
+    },
+    "novadis": {
+      "display_name": "Novadis Unipessoal Lda",
+      "nif": "504350900",
+      "invoice_format": "Thermal receipt style, PAGAMENTO MULTIBANCO box, monospace text",
+      "sample_count": 17,
+      "notes": "Central Cervejas distributor - Heineken, Guinness, etc."
+    },
+    "absolutlyvintage": {
+      "display_name": "Absolutly Vintage Unipessoal Lda",
+      "nif": "516001906",
+      "invoice_format": "Digital PDF, curved WINE & SPIRITS text around logo",
+      "sample_count": 1,
+      "notes": "Spirits supplier from Alcantarilha - added during session 1"
+    },
+    "magniberia": {
+      "display_name": "Magnibéria Ltd. (VENKO Solutions)",
+      "nif": "515102334",
+      "invoice_format": "Digital PDF, VENKO Solutions logo, Moloni software generated",
+      "sample_count": 2,
+      "notes": "Technical services (repairs, maintenance) from Tavira - added during session 2"
+    }
+  },
+
+  "statistics": {
+    "total_invoices_tested": 230,
+    "classification_accuracy": "~90%",
+    "date_extraction_success": "~81%",
+    "average_processing_time_per_invoice": "~2 seconds",
+    "total_suppliers": 65,
+    "invoice_suppliers_parseur": 7,
+    "receipt_suppliers_docupipe": 58
+  },
+
+  "todo": [
+    {
+      "priority": "completed",
+      "task": "ScanSnap integration via Google Drive + rclone",
+      "details": "Mount Google Drive with rclone so classifier can read scans and move/rename files directly",
+      "status": "completed",
+      "completed_date": "2026-02-02"
+    },
+    {
+      "priority": "completed",
+      "task": "Implement automatic processing with systemd timer",
+      "details": "Systemd timer runs every N minutes to process new PDFs from Google Drive folders",
+      "status": "completed",
+      "completed_date": "2026-02-03"
+    },
+    {
+      "priority": "completed",
+      "task": "Add OCR API routing based on supplier",
+      "details": "Implemented Parseur integration with supplier-specific mailboxes",
+      "status": "completed"
+    },
+    {
+      "priority": "completed",
+      "task": "Implement Docupipe API integration",
+      "details": "Created docupipe_client.py for receipt uploads with base64 encoding",
+      "status": "completed",
+      "completed_date": "2026-02-02"
+    },
+    {
+      "priority": "completed",
+      "task": "Improve date extraction for edge cases",
+      "details": "Added Portuguese month names, single-digit dates, US/EU auto-detection, header-region fallback",
+      "status": "completed",
+      "completed_date": "2026-02-03"
+    },
+    {
+      "priority": "medium",
+      "task": "Add invoice data extraction (not just classification)",
+      "details": "Extract line items, totals, VAT from invoices for accounting integration",
+      "status": "not_started"
+    },
+    {
+      "priority": "low",
+      "task": "Build web interface for manual review",
+      "details": "Simple UI to review REVIEW/ folder invoices and add new suppliers",
+      "status": "not_started"
+    },
+    {
+      "priority": "low",
+      "task": "Add email/notification on unknown invoice",
+      "details": "Alert when invoice can't be classified so user can add new supplier profile",
+      "status": "not_started"
+    }
+  ],
+
+  "future_features": [
+    "Integration with accounting software (Odoo mentioned in git history)",
+    "Local OCR model training for better accuracy",
+    "Multi-page invoice handling",
+    "Credit note (NC) vs invoice (FT) differentiation",
+    "Duplicate invoice detection"
+  ],
+
+  "technical_notes": {
+    "python_version": "3.12",
+    "key_libraries": ["pdf2image", "pytesseract", "opencv-python", "scikit-image"],
+    "system_dependencies": ["tesseract-ocr", "tesseract-ocr-por", "poppler-utils", "rclone"],
+    "classification_priority": "NIF > Keywords > Template",
+    "date_extraction_logic": "Find earliest date not in 'vencimento/pagamento' context"
+  },
+
+  "file_structure": {
+    "classifier.py": "Main classification logic - InvoiceClassifier class, process_and_move function",
+    "api_config.py": "Supplier to API routing table and config loading",
+    "parseur_client.py": "Parseur API client for invoice uploads",
+    "docupipe_client.py": "Docupipe API client for receipt uploads",
+    "process_invoices.sh": "Bash script for automatic processing via systemd timer",
+    "config.json": "API keys and secrets (not in git)",
+    "config.example.json": "Template for config.json",
+    "drivek.json": "Google Cloud Service Account key (not in git)",
+    "requirements.txt": "Python dependencies",
+    "invoices_example/": "Source folder with sample invoices (151 files)",
+    "MATCHED/": "Output folder for classified invoices",
+    "REVIEW/": "Output folder for unclassified invoices",
+    "templates/": "Optional - reference template images for visual matching",
+    "venv/": "Python virtual environment",
+    "~/.config/systemd/user/rclone-gdrive.service": "Systemd user service for auto-mounting Google Drive",
+    "~/.config/systemd/user/invoice-classifier.service": "Systemd service for invoice processing",
+    "~/.config/systemd/user/invoice-classifier.timer": "Systemd timer for automatic processing",
+    "~/GoogleDrive/": "rclone mount point for Google Drive"
+  }
+}

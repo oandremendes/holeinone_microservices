@@ -1,0 +1,40 @@
+# Invoice folders (contain sensitive business data)
+invoices_example/
+invoices_test/
+MATCHED/
+REVIEW/
+LIDL/
+live_test/
+new_invoices_to_process/
+teofilo_nc/
+old/
+
+# Config with secrets (use config.example.json as template)
+config.json
+
+# Google Cloud Service Account keys
+drivek.json
+*-service-account.json
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Templates (generated from invoices)
+templates/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

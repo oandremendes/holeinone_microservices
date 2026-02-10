@@ -1,0 +1,24 @@
+# Invoice Classification System
+# Install with: pip install -r requirements.txt
+
+# PDF processing
+pdf2image>=1.16.0
+PyPDF2>=3.0.0
+
+# Image processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0
+scikit-image>=0.21.0
+
+# OCR
+pytesseract>=0.3.10
+
+# Optional: Alternative OCR engines
+# easyocr>=1.7.0  # Requires PyTorch, heavier but sometimes better
+
+# Folder watching (for production)
+watchdog>=3.0.0
+
+# API clients
+requests>=2.31.0

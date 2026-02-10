@@ -1,0 +1,8 @@
+{
+  "parseur": {
+    "api_key": "YOUR_PARSEUR_API_KEY_HERE"
+  },
+  "docupipe": {
+    "api_key": "YOUR_DOCUPIPE_API_KEY_HERE"
+  }
+}
