@@ -175,6 +175,7 @@ fi
 # On headless VPS, use opencv-python-headless instead of opencv-python
 TEMP_REQ=$(mktemp)
 sed 's/opencv-python>=/opencv-python-headless>=/' "${APP_DIR}/requirements.txt" > "${TEMP_REQ}"
+chmod 644 "${TEMP_REQ}"
 
 sudo -u "${APP_USER}" "${APP_DIR}/venv/bin/pip" install --quiet --upgrade pip
 sudo -u "${APP_USER}" "${APP_DIR}/venv/bin/pip" install --quiet -r "${TEMP_REQ}"
