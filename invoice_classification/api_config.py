@@ -86,7 +86,7 @@ SUPPLIER_ROUTES = {
     'constantino': APIRoute(provider='docupipe'),
     'papelnet': APIRoute(provider='docupipe'),
     'gildadasilva': APIRoute(provider='docupipe'),
-    'robalo': APIRoute(provider='docupipe'),
+    'robalo': APIRoute(provider='docupipe', workflow_id='kjigWqyQ'),
     # Fast food
     'burgerking': APIRoute(provider='docupipe'),
     'mcdonalds': APIRoute(provider='docupipe'),
