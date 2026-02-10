@@ -476,6 +476,13 @@ class InvoiceClassifier:
             keywords=['gilda.*silva', 'multiservicos.*solbelo'],
             header_region=(0, 0, 400, 150),
         ),
+        'robalo': SupplierProfile(
+            name='robalo',
+            display_name='Robalo S.A.',
+            nif='500654573',
+            keywords=['robalo', 'utilidades.*dom.sticas', 'hoteleiras', 'robalo-sa\\.com'],
+            header_region=(0, 0, 400, 150),
+        ),
         'seminoshopping': SupplierProfile(
             name='seminoshopping',
             display_name='Semino Shopping',
