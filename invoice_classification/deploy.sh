@@ -157,6 +157,7 @@ rsync -a --delete \
     --exclude='deploy.sh' \
     "${SCRIPT_DIR}/" "${APP_DIR}/"
 
+chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
 ok "Application files synced to ${APP_DIR}"
 
 #############################################
