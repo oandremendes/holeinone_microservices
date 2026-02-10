@@ -42,7 +42,91 @@ Automated invoice classification for scanned documents from ScanSnap ix-1600. Id
 
 \* With Docupipe workflow for automatic standardization
 
-## Installation
+## VPS Deployment (One-Click)
+
+The `deploy.sh` script handles full production deployment to a VPS. It creates a dedicated `invclassificator` service user, installs all dependencies, configures systemd services, and sets up Google Drive mounting.
+
+### First Deployment
+
+```bash
+# Clone the repo on the VPS
+cd /root
+git clone <repo-url> holeinone_microservices
+
+# Deploy
+cd holeinone_microservices/invoice_classification
+sudo ./deploy.sh
+```
+
+The script will:
+1. Create system user `invclassificator`
+2. Install system packages (tesseract-ocr, poppler-utils, rclone, fuse3, etc.)
+3. Deploy app files to `/home/invclassificator/invoice_classification/`
+4. Set up Python venv with headless OpenCV (no GUI dependencies)
+5. Copy `config.json` and `drivek.json` if present in source, or create from template
+6. Configure rclone for Google Drive mounting
+7. Create and enable system-level systemd services:
+   - `rclone-gdrive-invclassificator.service` - Google Drive FUSE mount
+   - `invoice-classifier.service` - oneshot invoice processor
+   - `invoice-classifier.timer` - runs every 5 minutes (configurable)
+8. Start all services
+
+### Deploying Updates
+
+After adding features or fixing bugs:
+
+```bash
+cd /root/holeinone_microservices
+git pull
+sudo ./invoice_classification/deploy.sh
+```
+
+The script is **idempotent** - it skips what's already done (user, packages), syncs code changes, updates dependencies, and preserves configuration files (`config.json`, `drivek.json`).
+
+### Configurable Timer Interval
+
+```bash
+# Default: 5 minutes
+sudo ./deploy.sh
+
+# Override with environment variable
+TIMER_INTERVAL=1min sudo ./deploy.sh
+TIMER_INTERVAL=15min sudo ./deploy.sh
+```
+
+### Post-Deploy Manual Steps
+
+If `config.json` or `drivek.json` weren't available during deployment:
+
+```bash
+# Edit API keys
+sudo nano /home/invclassificator/invoice_classification/config.json
+
+# Copy Google Service Account key
+sudo cp /path/to/drivek.json /home/invclassificator/invoice_classification/drivek.json
+sudo chown invclassificator:invclassificator /home/invclassificator/invoice_classification/drivek.json
+sudo chmod 600 /home/invclassificator/invoice_classification/drivek.json
+sudo systemctl restart rclone-gdrive-invclassificator
+```
+
+### Service Management
+
+```bash
+# Check status
+systemctl status rclone-gdrive-invclassificator    # Google Drive mount
+systemctl status invoice-classifier.timer           # Timer status
+systemctl list-timers invoice-classifier.timer      # Next run time
+
+# View logs
+journalctl -t invoice-classifier -f                 # Classifier logs
+journalctl -u rclone-gdrive-invclassificator -f     # rclone logs
+tail -f /var/log/rclone-invclassificator.log         # rclone file log
+
+# Manual trigger
+sudo systemctl start invoice-classifier.service      # Run once now
+```
+
+## Local Installation (Development)
 
 ```bash
 # Create virtual environment
@@ -112,8 +196,10 @@ invoice_classification/
 ├── parseur_client.py      # Parseur API client (invoices)
 ├── docupipe_client.py     # Docupipe API client (receipts)
 ├── process_invoices.sh    # Auto-processing script for systemd
+├── deploy.sh              # One-click VPS deployment script
 ├── config.json            # API keys (not in git)
 ├── config.example.json    # Config template
+├── drivek.json            # Google Service Account key (not in git)
 ├── requirements.txt       # Python dependencies
 ├── venv/                  # Virtual environment
 ├── invoices_example/      # Source invoices to process

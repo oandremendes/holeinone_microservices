@@ -2,9 +2,59 @@
   "project": "Invoice Classification System",
   "description": "Automated invoice classification for scanned documents from ScanSnap ix-1600",
   "created": "2026-02-01",
-  "last_updated": "2026-02-03",
+  "last_updated": "2026-02-10",
 
   "sessions": [
+    {
+      "date": "2026-02-10",
+      "session": 6,
+      "summary": "Created one-click VPS deployment script with dedicated service user and system-level systemd services",
+      "tasks_completed": [
+        "Created deploy.sh for one-click VPS deployment",
+        "Script creates dedicated 'invclassificator' system user with home at /home/invclassificator",
+        "Automated system dependency installation (tesseract-ocr, poppler-utils, rclone, fuse3, python3-venv)",
+        "Application files deployed via rsync with --delete for clean syncs on re-deploy",
+        "Uses opencv-python-headless instead of opencv-python for VPS compatibility (no GUI)",
+        "Configuration files (config.json, drivek.json) preserved across re-deployments",
+        "Configured rclone with Google Cloud Service Account for Google Drive mounting",
+        "Created system-level systemd services (not user-level) for production reliability",
+        "Timer interval configurable via TIMER_INTERVAL env var (default: 5min)",
+        "Script is fully idempotent - safe to re-run for code updates",
+        "Updated README with VPS deployment documentation and service management commands",
+        "FUSE access configured for service user (fuse group + user_allow_other)"
+      ],
+      "deployment_details": {
+        "script": "deploy.sh",
+        "service_user": "invclassificator",
+        "install_dir": "/home/invclassificator/invoice_classification",
+        "gdrive_mount": "/home/invclassificator/GoogleDrive",
+        "timer_interval": "5min (configurable)",
+        "systemd_services": {
+          "rclone_mount": "/etc/systemd/system/rclone-gdrive-invclassificator.service",
+          "classifier": "/etc/systemd/system/invoice-classifier.service",
+          "timer": "/etc/systemd/system/invoice-classifier.timer"
+        },
+        "update_workflow": "git pull && sudo ./deploy.sh"
+      },
+      "decisions_made": [
+        {
+          "decision": "Use system-level systemd services instead of user-level",
+          "rationale": "Dedicated service user with system-level services is more reliable for production VPS deployment, doesn't require loginctl enable-linger"
+        },
+        {
+          "decision": "Deploy via rsync from git clone, not directly from git",
+          "rationale": "Git repo stays in /root as deployment source, app files copied to service user home. Keeps separation between source and deployed code"
+        },
+        {
+          "decision": "Use opencv-python-headless on VPS",
+          "rationale": "VPS has no display server; opencv-python pulls in Qt/GTK dependencies that fail to install on headless systems"
+        },
+        {
+          "decision": "Default timer to 5 minutes for production",
+          "rationale": "Good balance between responsiveness and resource usage. Configurable via TIMER_INTERVAL=Xmin env var for flexibility"
+        }
+      ]
+    },
     {
       "date": "2026-02-03",
       "session": 5,
@@ -353,6 +403,13 @@
       "completed_date": "2026-02-03"
     },
     {
+      "priority": "completed",
+      "task": "One-click VPS deployment with deploy.sh",
+      "details": "Created deploy.sh script that creates invclassificator user, installs deps, deploys code, configures rclone and systemd. Idempotent for re-deployment after code updates.",
+      "status": "completed",
+      "completed_date": "2026-02-10"
+    },
+    {
       "priority": "medium",
       "task": "Add invoice data extraction (not just classification)",
       "details": "Extract line items, totals, VAT from invoices for accounting integration",
@@ -394,6 +451,7 @@
     "parseur_client.py": "Parseur API client for invoice uploads",
     "docupipe_client.py": "Docupipe API client for receipt uploads",
     "process_invoices.sh": "Bash script for automatic processing via systemd timer",
+    "deploy.sh": "One-click VPS deployment script (idempotent, creates user, installs deps, configures systemd)",
     "config.json": "API keys and secrets (not in git)",
     "config.example.json": "Template for config.json",
     "drivek.json": "Google Cloud Service Account key (not in git)",
@@ -403,9 +461,12 @@
     "REVIEW/": "Output folder for unclassified invoices",
     "templates/": "Optional - reference template images for visual matching",
     "venv/": "Python virtual environment",
-    "~/.config/systemd/user/rclone-gdrive.service": "Systemd user service for auto-mounting Google Drive",
-    "~/.config/systemd/user/invoice-classifier.service": "Systemd service for invoice processing",
-    "~/.config/systemd/user/invoice-classifier.timer": "Systemd timer for automatic processing",
+    "/etc/systemd/system/rclone-gdrive-invclassificator.service": "System-level rclone mount service (VPS)",
+    "/etc/systemd/system/invoice-classifier.service": "System-level invoice processing service (VPS)",
+    "/etc/systemd/system/invoice-classifier.timer": "System-level timer for automatic processing (VPS)",
+    "~/.config/systemd/user/rclone-gdrive.service": "User-level rclone mount (development)",
+    "~/.config/systemd/user/invoice-classifier.service": "User-level invoice processing (development)",
+    "~/.config/systemd/user/invoice-classifier.timer": "User-level timer (development)",
     "~/GoogleDrive/": "rclone mount point for Google Drive"
   }
 }
