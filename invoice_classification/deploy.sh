@@ -445,16 +445,17 @@ echo ""
 # Check for remaining manual steps
 MANUAL_STEPS=()
 if [[ ! -f "${APP_DIR}/drivek.json" ]]; then
-    MANUAL_STEPS+=("Copy Google Service Account key:")
+    MANUAL_STEPS+=("Copy Google Service Account key, then re-run this script:")
     MANUAL_STEPS+=("  sudo cp /path/to/drivek.json ${APP_DIR}/drivek.json")
     MANUAL_STEPS+=("  sudo chown ${APP_USER}:${APP_USER} ${APP_DIR}/drivek.json")
     MANUAL_STEPS+=("  sudo chmod 600 ${APP_DIR}/drivek.json")
-    MANUAL_STEPS+=("  sudo systemctl restart rclone-gdrive-${APP_USER}")
+    MANUAL_STEPS+=("  sudo ./deploy.sh   # re-run to configure rclone and start mount")
     MANUAL_STEPS+=("")
 fi
 if grep -q "YOUR_.*_KEY_HERE" "${APP_DIR}/config.json" 2>/dev/null; then
-    MANUAL_STEPS+=("Edit API keys in config.json:")
+    MANUAL_STEPS+=("Edit API keys in config.json, then re-run this script:")
     MANUAL_STEPS+=("  sudo nano ${APP_DIR}/config.json")
+    MANUAL_STEPS+=("  sudo ./deploy.sh   # re-run to pick up config changes")
     MANUAL_STEPS+=("")
 fi
 
