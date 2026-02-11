@@ -247,16 +247,10 @@ else
     fi
 fi
 
-# Clean up stale FUSE mount before touching mount point
-if mountpoint -q "${GDRIVE_MOUNT}" 2>/dev/null; then
-    systemctl stop "rclone-gdrive-${APP_USER}.service" 2>/dev/null || true
-    fusermount -u "${GDRIVE_MOUNT}" 2>/dev/null || umount -l "${GDRIVE_MOUNT}" 2>/dev/null || true
-    ok "Unmounted existing Google Drive mount"
-elif [[ -e "${GDRIVE_MOUNT}" ]] && ! ls "${GDRIVE_MOUNT}" &>/dev/null; then
-    systemctl stop "rclone-gdrive-${APP_USER}.service" 2>/dev/null || true
-    fusermount -u "${GDRIVE_MOUNT}" 2>/dev/null || umount -l "${GDRIVE_MOUNT}" 2>/dev/null || true
-    ok "Cleaned up stale FUSE mount"
-fi
+# Always attempt to clean up mount point (handles stale FUSE mounts)
+systemctl stop "rclone-gdrive-${APP_USER}.service" 2>/dev/null || true
+fusermount -u "${GDRIVE_MOUNT}" 2>/dev/null || true
+umount -l "${GDRIVE_MOUNT}" 2>/dev/null || true
 
 # Create mount point
 mkdir -p "${GDRIVE_MOUNT}"
