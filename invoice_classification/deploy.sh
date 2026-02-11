@@ -401,6 +401,18 @@ ok "systemd daemon reloaded"
 systemctl enable "rclone-gdrive-${APP_USER}.service" --quiet 2>/dev/null
 systemctl enable invoice-classifier.timer --quiet 2>/dev/null
 
+# Clean up stale FUSE mount before restarting rclone
+if mountpoint -q "${GDRIVE_MOUNT}" 2>/dev/null; then
+    systemctl stop "rclone-gdrive-${APP_USER}.service" 2>/dev/null || true
+    fusermount -u "${GDRIVE_MOUNT}" 2>/dev/null || umount -l "${GDRIVE_MOUNT}" 2>/dev/null || true
+    ok "Unmounted existing Google Drive mount"
+elif [[ -d "${GDRIVE_MOUNT}" ]] && ! ls "${GDRIVE_MOUNT}" &>/dev/null; then
+    # Stale mount (directory exists but inaccessible)
+    systemctl stop "rclone-gdrive-${APP_USER}.service" 2>/dev/null || true
+    fusermount -u "${GDRIVE_MOUNT}" 2>/dev/null || umount -l "${GDRIVE_MOUNT}" 2>/dev/null || true
+    ok "Cleaned up stale FUSE mount"
+fi
+
 # Start rclone if config is available
 if [[ -f "${APP_DIR}/drivek.json" ]] && [[ -f "${RCLONE_CONFIG}" ]]; then
     systemctl restart "rclone-gdrive-${APP_USER}.service" && \
