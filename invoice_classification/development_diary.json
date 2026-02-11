@@ -8,7 +8,7 @@
     {
       "date": "2026-02-10",
       "session": 6,
-      "summary": "Created one-click VPS deployment script with dedicated service user and system-level systemd services",
+      "summary": "VPS deployment, INTEGRATED folder for API-routed invoices, added Robalo supplier",
       "tasks_completed": [
         "Created deploy.sh for one-click VPS deployment",
         "Script creates dedicated 'invclassificator' system user with home at /home/invclassificator",
@@ -20,9 +20,24 @@
         "Created system-level systemd services (not user-level) for production reliability",
         "Timer interval configurable via TIMER_INTERVAL env var (default: 5min)",
         "Script is fully idempotent - safe to re-run for code updates",
-        "Updated README with VPS deployment documentation and service management commands",
-        "FUSE access configured for service user (fuse group + user_allow_other)"
+        "FUSE access configured for service user (fuse group + user_allow_other)",
+        "Added INTEGRATED/ output folder for suppliers with API integration (mailbox_id or workflow_id)",
+        "MATCHED/ now only receives classified invoices without API integration",
+        "Upload to OCR APIs only happens for INTEGRATED files",
+        "Added Robalo S.A. supplier (NIF: 500654573) - hotel/restaurant supplies, Docupipe workflow kjigWqyQ",
+        "Updated README and development diary with all changes"
       ],
+      "new_suppliers": {
+        "hardware": ["robalo"]
+      },
+      "docupipe_workflows": {
+        "robalo": "kjigWqyQ"
+      },
+      "output_folder_logic": {
+        "INTEGRATED": "Supplier matched + has mailbox_id (Parseur) or workflow_id (Docupipe) -> uploaded to API",
+        "MATCHED": "Supplier matched but no API integration configured -> classified and renamed only",
+        "REVIEW": "Unknown supplier -> original filename, needs manual review"
+      },
       "deployment_details": {
         "script": "deploy.sh",
         "service_user": "invclassificator",
@@ -52,6 +67,10 @@
         {
           "decision": "Default timer to 5 minutes for production",
           "rationale": "Good balance between responsiveness and resource usage. Configurable via TIMER_INTERVAL=Xmin env var for flexibility"
+        },
+        {
+          "decision": "Add INTEGRATED folder for suppliers with API integration",
+          "rationale": "Separates invoices that are fully processed via OCR APIs from those that are only classified locally. Only INTEGRATED files get uploaded, reducing unnecessary API calls for suppliers without workflows/mailboxes"
         }
       ]
     },
@@ -362,9 +381,9 @@
     "classification_accuracy": "~90%",
     "date_extraction_success": "~81%",
     "average_processing_time_per_invoice": "~2 seconds",
-    "total_suppliers": 65,
+    "total_suppliers": 66,
     "invoice_suppliers_parseur": 7,
-    "receipt_suppliers_docupipe": 58
+    "receipt_suppliers_docupipe": 59
   },
 
   "todo": [
@@ -457,7 +476,8 @@
     "drivek.json": "Google Cloud Service Account key (not in git)",
     "requirements.txt": "Python dependencies",
     "invoices_example/": "Source folder with sample invoices (151 files)",
-    "MATCHED/": "Output folder for classified invoices",
+    "INTEGRATED/": "Output folder for classified invoices with API integration (uploaded to Parseur/Docupipe)",
+    "MATCHED/": "Output folder for classified invoices without API integration",
     "REVIEW/": "Output folder for unclassified invoices",
     "templates/": "Optional - reference template images for visual matching",
     "venv/": "Python virtual environment",

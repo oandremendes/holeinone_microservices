@@ -1142,25 +1142,40 @@ def upload_to_api(file_path: Path, supplier: str) -> dict:
         }
 
 
+def _has_integration(supplier: str) -> bool:
+    """Check if a supplier has an API integration (mailbox_id or workflow_id)."""
+    try:
+        from api_config import get_route
+        route = get_route(supplier)
+        if route and route.enabled:
+            return bool(route.mailbox_id or route.workflow_id)
+    except ImportError:
+        pass
+    return False
+
+
 def process_and_move(
     classifier: InvoiceClassifier,
     source_dir: Path,
     matched_dir: Path,
     review_dir: Path,
+    integrated_dir: Path,
     dry_run: bool = False,
     upload: bool = False
 ) -> dict:
     """
     Process all PDFs in source directory, rename and move them.
 
-    Matched invoices: YYYYMMDD_Supplier.pdf -> MATCHED/
+    Integrated invoices: YYYYMMDD_Supplier.pdf -> INTEGRATED/ (has API workflow/mailbox)
+    Matched invoices: YYYYMMDD_Supplier.pdf -> MATCHED/ (no API workflow/mailbox)
     Unknown invoices: original name -> REVIEW/
 
     Args:
         classifier: InvoiceClassifier instance
         source_dir: Directory containing PDFs to process
-        matched_dir: Directory for matched/classified invoices
+        matched_dir: Directory for matched/classified invoices without integration
         review_dir: Directory for unknown invoices needing review
+        integrated_dir: Directory for matched invoices with API workflow/mailbox
         dry_run: If True, only show what would happen without moving files
         upload: If True, upload classified invoices to OCR API
 
@@ -1170,9 +1185,11 @@ def process_and_move(
     # Ensure output directories exist
     matched_dir.mkdir(exist_ok=True)
     review_dir.mkdir(exist_ok=True)
+    integrated_dir.mkdir(exist_ok=True)
 
     stats = {
         'total': 0,
+        'integrated': 0,
         'matched': 0,
         'review': 0,
         'errors': 0,
@@ -1202,18 +1219,26 @@ def process_and_move(
                 # Capitalize supplier name properly
                 supplier_name = result.supplier.capitalize()
 
+                # Choose destination: INTEGRATED (has workflow/mailbox) or MATCHED
+                has_api = _has_integration(result.supplier)
+                target_dir = integrated_dir if has_api else matched_dir
+
                 # Handle duplicate filenames by adding a counter
                 new_filename = f"{date_part}_{supplier_name}.pdf"
-                dest_path = matched_dir / new_filename
+                dest_path = target_dir / new_filename
 
                 counter = 1
                 while dest_path.exists():
                     new_filename = f"{date_part}_{supplier_name}_{counter}.pdf"
-                    dest_path = matched_dir / new_filename
+                    dest_path = target_dir / new_filename
                     counter += 1
 
-                stats['matched'] += 1
-                action = 'MATCHED'
+                if has_api:
+                    stats['integrated'] += 1
+                    action = 'INTEGRATED'
+                else:
+                    stats['matched'] += 1
+                    action = 'MATCHED'
             else:
                 # Unknown - move to review with original name
                 new_filename = pdf_path.name
@@ -1244,14 +1269,14 @@ def process_and_move(
 
             if dry_run:
                 logger.info(f"[DRY RUN] {pdf_path.name} -> {action}/{new_filename}")
-                if upload and action == 'MATCHED':
+                if upload and action == 'INTEGRATED':
                     logger.info(f"[DRY RUN] Would upload to API for supplier: {result.supplier}")
             else:
                 shutil.move(str(pdf_path), str(dest_path))
                 logger.info(f"{pdf_path.name} -> {action}/{new_filename}")
 
-                # Upload to OCR API if enabled and matched
-                if upload and action == 'MATCHED':
+                # Upload to OCR API if enabled and has integration
+                if upload and action == 'INTEGRATED':
                     upload_result = upload_to_api(dest_path, result.supplier)
                     file_info['upload'] = upload_result
                     if upload_result['success']:
@@ -1336,6 +1361,7 @@ if __name__ == '__main__':
     base_dir = Path(__file__).parent
     invoices_dir = base_dir / 'invoices_example'
     templates_dir = base_dir / 'templates'
+    integrated_dir = base_dir / 'INTEGRATED'
     matched_dir = base_dir / 'MATCHED'
     review_dir = base_dir / 'REVIEW'
 
@@ -1355,7 +1381,7 @@ Options:
     --dry-run        Show what would happen without making changes
     --upload         Upload classified invoices to configured OCR APIs
                      (Parseur for invoices, Docupipe for receipts)
-    --output-dir     Directory for MATCHED/ and REVIEW/ folders (default: source folder)
+    --output-dir     Directory for INTEGRATED/, MATCHED/ and REVIEW/ folders (default: source folder)
 
 Configuration:
     Edit config.json with API keys (see config.example.json)
@@ -1404,12 +1430,14 @@ Default folder: invoices_example/
     if source_folder:
         invoices_dir = source_folder
 
-    # Set output directories (MATCHED/REVIEW)
+    # Set output directories (INTEGRATED/MATCHED/REVIEW)
     # Priority: --output-dir > source folder > script directory
     if output_dir:
+        integrated_dir = output_dir / 'INTEGRATED'
         matched_dir = output_dir / 'MATCHED'
         review_dir = output_dir / 'REVIEW'
     elif source_folder:
+        integrated_dir = source_folder / 'INTEGRATED'
         matched_dir = source_folder / 'MATCHED'
         review_dir = source_folder / 'REVIEW'
 
@@ -1448,6 +1476,7 @@ Default folder: invoices_example/
                 source_dir=invoices_dir,
                 matched_dir=matched_dir,
                 review_dir=review_dir,
+                integrated_dir=integrated_dir,
                 dry_run=dry_run,
                 upload=upload
             )
@@ -1456,6 +1485,7 @@ Default folder: invoices_example/
             print("PROCESSING SUMMARY")
             print("="*70)
             print(f"Total processed: {stats['total']}")
+            print(f"Integrated (-> INTEGRATED/): {stats['integrated']}")
             print(f"Matched (-> MATCHED/): {stats['matched']}")
             print(f"For review (-> REVIEW/): {stats['review']}")
             print(f"Errors: {stats['errors']}")

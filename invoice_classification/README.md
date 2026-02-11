@@ -164,16 +164,17 @@ Shows what would happen without actually moving files.
 python classifier.py process
 ```
 Classifies, renames, and moves files:
-- **MATCHED/**: Known suppliers → `YYYYMMDD_Supplier.pdf`
+- **INTEGRATED/**: Known suppliers with API integration (has `mailbox_id` or `workflow_id`) → `YYYYMMDD_Supplier.pdf`
+- **MATCHED/**: Known suppliers without API integration → `YYYYMMDD_Supplier.pdf`
 - **REVIEW/**: Unknown suppliers → original filename
 
 ### Process and Upload to OCR APIs
 ```bash
 python classifier.py process --upload
 ```
-Same as above, plus uploads each classified document to the appropriate OCR API:
-- **Invoices** → Parseur (supplier-specific mailboxes)
-- **Receipts** → Docupipe (base64 upload)
+Same as above, plus uploads INTEGRATED documents to the appropriate OCR API:
+- **Invoices** → Parseur (supplier-specific mailboxes via `mailbox_id`)
+- **Receipts** → Docupipe (workflow-based extraction via `workflow_id`)
 
 ### Generate Templates (Optional)
 ```bash
@@ -203,7 +204,8 @@ invoice_classification/
 ├── requirements.txt       # Python dependencies
 ├── venv/                  # Virtual environment
 ├── invoices_example/      # Source invoices to process
-├── MATCHED/               # Output: classified invoices
+├── INTEGRATED/            # Output: classified with API integration
+├── MATCHED/               # Output: classified without API integration
 ├── REVIEW/                # Output: unclassified invoices
 └── templates/             # Reference templates (optional)
 ```
@@ -215,7 +217,7 @@ invoice_classification/
 3. **NIF Matching**: Searches for supplier tax IDs (95% confidence)
 4. **Keyword Fallback**: If no NIF found, matches supplier keywords
 5. **Date Extraction**: Finds invoice date, avoiding due dates
-6. **File Operations**: Renames and moves to appropriate folder
+6. **File Operations**: Renames and moves to INTEGRATED/ (has API integration), MATCHED/ (no integration), or REVIEW/ (unknown)
 
 ## Classification Methods
 

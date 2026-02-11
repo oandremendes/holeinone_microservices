@@ -1,6 +1,7 @@
 # Invoice folders (contain sensitive business data)
 invoices_example/
 invoices_test/
+INTEGRATED/
 MATCHED/
 REVIEW/
 LIDL/

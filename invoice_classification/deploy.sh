@@ -142,6 +142,7 @@ rsync -a --delete \
     --exclude='*.pyc' \
     --exclude='invoices_example/' \
     --exclude='invoices_test/' \
+    --exclude='INTEGRATED/' \
     --exclude='MATCHED/' \
     --exclude='REVIEW/' \
     --exclude='LIDL/' \
