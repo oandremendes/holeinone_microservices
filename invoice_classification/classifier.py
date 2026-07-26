@@ -129,7 +129,7 @@ class InvoiceClassifier:
             name='teofilo_nc',
             display_name='Teófilo - Nota de Crédito',
             nif='500099871',  # Same NIF as teofilo
-            keywords=['nota.*cr[ée]dito', 'c\\s*caau'],
+            keywords=['c\\s*caau', 'teofilo.*cr[ée]dito'],
             header_region=(0, 0, 400, 150),
         ),
         # === RECEIPTS (Docupipe) ===
@@ -526,6 +526,153 @@ class InvoiceClassifier:
             keywords=['brisa.*concessao', 'bcr', 'portagem'],
             header_region=(0, 0, 400, 150),
         ),
+        'securitas': SupplierProfile(
+            name='securitas',
+            display_name='Securitas',
+            nif='500243719',
+            keywords=['securitas', 'segurança'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'ahresp': SupplierProfile(
+            name='ahresp',
+            display_name='AHRESP',
+            nif='503767514',
+            keywords=['ahresp', 'respostas.*futuro'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'mscar': SupplierProfile(
+            name='mscar',
+            display_name='MSCAR',
+            nif='507114540',
+            keywords=['mscar', 'algarve.*sobre.*rodas'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'cin': SupplierProfile(
+            name='cin',
+            display_name='CIN',
+            nif='',
+            keywords=['cin.*corpora[çc]', 'corpora[çc].*industrial.*norte'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'gabarito': SupplierProfile(
+            name='gabarito',
+            display_name='Gabarito',
+            nif='513921230',
+            keywords=['gabarito', 'chaviarte'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'maxmat': SupplierProfile(
+            name='maxmat',
+            display_name='Maxmat',
+            nif='503246468',
+            keywords=['maxmat'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'norauto': SupplierProfile(
+            name='norauto',
+            display_name='Norauto',
+            nif='503629995',
+            keywords=['norauto'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'zembe': SupplierProfile(
+            name='zembe',
+            display_name='Zembe',
+            nif='510416268',
+            keywords=['[zg]embe', 'material.*el[ée]trico'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'abadiarural': SupplierProfile(
+            name='abadiarural',
+            display_name='Abadia Rural',
+            nif='514120479',
+            keywords=['abadiarural', 'abadia.*rural'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'nicolaurosa': SupplierProfile(
+            name='nicolaurosa',
+            display_name='Nicolau & Rosa',
+            nif='500615403',
+            keywords=['nicolau.*rosa'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'sushimishi': SupplierProfile(
+            name='sushimishi',
+            display_name='Sushi Mishi',
+            nif='259012017',
+            keywords=['sushi.*mishi'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'hidroquarteirense': SupplierProfile(
+            name='hidroquarteirense',
+            display_name='Hidroquarteirense',
+            nif='505427484',
+            keywords=['hidroquarteirense'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'sulcones': SupplierProfile(
+            name='sulcones',
+            display_name='Sulcones',
+            nif='504476084',
+            keywords=['sulcones', 'produtos.*alimentares'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'decathlon': SupplierProfile(
+            name='decathlon',
+            display_name='Decathlon',
+            nif='503074586',
+            keywords=['decathlon'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'spar': SupplierProfile(
+            name='spar',
+            display_name='SPAR',
+            nif='506175812',
+            keywords=['\\bspar\\b', 'portspar'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'tiger': SupplierProfile(
+            name='tiger',
+            display_name='Flying Tiger',
+            nif='510414850',
+            keywords=['flying.*tiger', 'tiger.*portugal'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'europcar': SupplierProfile(
+            name='europcar',
+            display_name='Europcar',
+            nif='',
+            keywords=['europcar', 'berthier'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'prosaaromaticas': SupplierProfile(
+            name='prosaaromaticas',
+            display_name='Prosa Aromáticas',
+            nif='517807904',
+            keywords=['prosa.*arom[áa]ticas'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'montalgarve': SupplierProfile(
+            name='montalgarve',
+            display_name='Montalgarve',
+            nif='500801118',
+            keywords=['montalgarve'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'passarinho': SupplierProfile(
+            name='passarinho',
+            display_name='Passarinho',
+            nif='501544364',
+            keywords=['passarinho', 'materiais.*constru'],
+            header_region=(0, 0, 400, 150),
+        ),
+        'drogariasemino': SupplierProfile(
+            name='drogariasemino',
+            display_name='Drogaria Semino',
+            nif='502607300',
+            keywords=['drogaria.*semino', 'sffsemino'],
+            header_region=(0, 0, 400, 150),
+        ),
     }
 
     def __init__(self, templates_dir: Optional[Path] = None):
@@ -737,7 +884,23 @@ class InvoiceClassifier:
 
         return None
 
-    def extract_invoice_date(self, text: str) -> Optional[str]:
+    def _is_future_date(self, date_str: str) -> bool:
+        """
+        Check if a YYYYMMDD date string is in the future.
+
+        Args:
+            date_str: Date in YYYYMMDD format
+
+        Returns:
+            True if the date is after today
+        """
+        try:
+            today = datetime.now().strftime('%Y%m%d')
+            return date_str > today
+        except (ValueError, TypeError):
+            return False
+
+    def extract_invoice_date(self, text: str, is_credit_note: bool = False) -> Optional[str]:
         """
         Extract invoice date from OCR text.
 
@@ -746,9 +909,13 @@ class InvoiceClassifier:
         - Data Emissão: DD/MM/YYYY, etc.
 
         Prioritizes issue date (emissão) over due date (vencimento).
+        Rejects future dates as likely OCR misreads and looks for alternatives.
+        For credit notes, skips priority keyword matching and uses the latest
+        non-future date (the NC date is usually more recent than referenced dates).
 
         Args:
             text: OCR extracted text
+            is_credit_note: If True, skip priority keyword first pass
 
         Returns:
             Date in YYYYMMDD format, or None if not found
@@ -760,16 +927,18 @@ class InvoiceClassifier:
         date_patterns = [
             # Portuguese month format: 30 - set - 2025 or 30 - set 2025 or 30-set-25
             (rf'(\d{{1,2}})\s*[-–]\s*{pt_months}\s*[-–]?\s*(\d{{2,4}})', 'pt_month'),
-            # ISO format with dashes: 2025-02-10
-            (r'(\d{4})-(\d{1,2})-(\d{1,2})', 'ymd'),
+            # ISO format with dashes: 2025-02-10 (allow spaces around dashes for OCR artifacts)
+            (r'(\d{4})\s*-\s*(\d{1,2})\s*-\s*(\d{1,2})', 'ymd'),
             # ISO format with slashes: 2025/02/10
-            (r'(\d{4})/(\d{1,2})/(\d{1,2})', 'ymd'),
+            (r'(\d{4})\s*/\s*(\d{1,2})\s*/\s*(\d{1,2})', 'ymd'),
             # European/US format with slashes: 10/02/2025 or 2/16/2025
             (r'(\d{1,2})/(\d{1,2})/(\d{4})', 'ambiguous'),
             # European format with dashes: 10-02-2025
             (r'(\d{1,2})-(\d{1,2})-(\d{4})', 'dmy'),
             # European format with dots: 10.02.2025
             (r'(\d{1,2})\.(\d{1,2})\.(\d{4})', 'dmy'),
+            # European format with 2-digit year and dashes: 16-02-26 (DD-MM-YY)
+            (r'(?<!\d)(\d{1,2})-(\d{1,2})-(\d{2})(?!\d)', 'dmy'),
         ]
 
         # Priority keywords for invoice ISSUE date (highest priority first)
@@ -790,7 +959,11 @@ class InvoiceClassifier:
         text_lower = text.lower()
 
         # First pass: Look for dates near priority keywords (issue date)
-        for keyword in priority_keywords:
+        # Skip for credit notes (priority keywords often point to the original invoice date)
+        keyword_dates = []
+        if is_credit_note:
+            logger.info("Credit note detected — skipping priority keyword date matching")
+        for keyword in ([] if is_credit_note else priority_keywords):
             keyword_match = re.search(keyword, text_lower)
             if keyword_match:
                 # Look for date pattern after the keyword
@@ -801,34 +974,68 @@ class InvoiceClassifier:
                     if match:
                         date = self._normalize_date(match, date_format)
                         if date:
-                            return date
+                            if not self._is_future_date(date):
+                                return date
+                            else:
+                                logger.warning(f"Skipping future date {date} found near '{keyword}' — likely OCR misread")
+                                keyword_dates.append(date)
 
-        # Second pass: Find all dates and pick the earliest one that's not a due date
-        # This is a heuristic: invoice date is usually earlier than due date
+        # Build set of date positions to avoid: the first date after each avoid keyword
+        # (forward approach is more precise than backward context for table layouts)
+        avoided_positions = set()
+        for kw in avoid_keywords:
+            for kw_match in re.finditer(kw, text_lower):
+                search_start = kw_match.end()
+                search_area = text_lower[search_start:search_start + 80]
+                earliest_pos = None
+                for pattern, date_format in date_patterns:
+                    date_match = re.search(pattern, search_area)
+                    if date_match:
+                        if earliest_pos is None or date_match.start() < earliest_pos:
+                            earliest_pos = date_match.start()
+                if earliest_pos is not None:
+                    avoided_positions.add(search_start + earliest_pos)
+
+        # Second pass: Find all dates, skipping due dates and timestamps
         all_dates = []
+        future_dates = []
 
         for pattern, date_format in date_patterns:
             for match in re.finditer(pattern, text_lower):
-                # Check if this date is near an "avoid" keyword
-                start_pos = max(0, match.start() - 50)
-                context = text_lower[start_pos:match.start()]
+                # Skip dates at positions identified as due/payment dates
+                if match.start() in avoided_positions:
+                    continue
 
-                is_due_date = any(re.search(kw, context) for kw in avoid_keywords)
+                # Skip timestamps (dates followed by "às HH:MM" are transport/print times)
+                after_date = text_lower[match.end():match.end() + 20]
+                if re.match(r'\s*às\s+\d{1,2}[.:]\d{2}', after_date):
+                    continue
 
-                if not is_due_date:
-                    date = self._normalize_date(match, date_format)
-                    if date:
+                date = self._normalize_date(match, date_format)
+                if date:
+                    if not self._is_future_date(date):
                         all_dates.append(date)
+                    else:
+                        future_dates.append(date)
 
-        # Return the earliest date found (usually the issue date)
+        # Return the latest non-future date found
+        # (invoice date is usually more recent than referenced period dates,
+        #  and due dates are filtered by avoid_keywords above)
         if all_dates:
-            return min(all_dates)
+            return max(all_dates)
 
-        # Last fallback: any date at all
+        # Last fallback: any non-future date at all
         for pattern, date_format in date_patterns:
             match = re.search(pattern, text_lower)
             if match:
-                return self._normalize_date(match, date_format)
+                date = self._normalize_date(match, date_format)
+                if date and not self._is_future_date(date):
+                    return date
+
+        # If we only found future dates, log a warning and return None
+        all_future = keyword_dates + future_dates
+        if all_future:
+            logger.warning(f"All detected dates are in the future {all_future} — returning None")
 
         return None
 
@@ -865,8 +1072,10 @@ class InvoiceClassifier:
                 # ISO format: YYYY-MM-DD or YYYY/MM/DD
                 year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
             elif date_format == 'dmy':
-                # European format: DD-MM-YYYY or DD/MM/YYYY
+                # European format: DD-MM-YYYY or DD/MM/YYYY (also DD-MM-YY)
                 day, month, year = int(groups[0]), int(groups[1]), int(groups[2])
+                if year < 100:
+                    year = 2000 + year
             elif date_format == 'ambiguous':
                 # Could be DD/MM/YYYY (European) or MM/DD/YYYY (US)
                 # Detect based on which value can be a valid month
@@ -952,6 +1161,32 @@ class InvoiceClassifier:
 
         return None
 
+    def _detect_document_type_suffix(self, supplier: str, text: str) -> str:
+        """Detect document type and append suffix (_nc, _recibo) to supplier name."""
+        # Don't add suffix if already present
+        if supplier.endswith(('_nc', '_gd', '_recibo')):
+            return supplier
+
+        # Check for credit note (nota de crédito)
+        if re.search(r'nota\s+de\s+cr[eé]dito', text, re.IGNORECASE):
+            return supplier + '_nc'
+
+        # Check for standalone receipt: "recibo" as a document TYPE header
+        # (followed by ":" or a document number, not casual mentions like "serve de recibo")
+        is_recibo_type = bool(re.search(
+            r'\brecibo\s*:\s*\S', text, re.IGNORECASE  # "recibo: XXX"
+        )) or bool(re.search(
+            r'\brecibo\s+\d{4,}', text, re.IGNORECASE  # "recibo NNNNN"
+        ))
+        # Exclude fatura/recibo combos (these are regular invoices)
+        is_fatura_recibo = bool(re.search(
+            r'\b(?:fatura|factura)[\s/.-]*recibo', text, re.IGNORECASE
+        ))
+        if is_recibo_type and not is_fatura_recibo:
+            return supplier + '_recibo'
+
+        return supplier
+
     def classify(self, pdf_path: Path) -> ClassificationResult:
         """
         Classify an invoice PDF.
@@ -984,76 +1219,71 @@ class InvoiceClassifier:
         # Extract text with OCR
         text = self.extract_text_ocr(image)
 
-        # Try classification methods in order of reliability
+        # Check if this is a credit note (affects date extraction strategy)
+        is_credit_note = bool(re.search(r'nota\s+de\s+cr[eé]dito', text, re.IGNORECASE))
 
         # Extract invoice date
-        invoice_date = self.extract_invoice_date(text)
+        invoice_date = self.extract_invoice_date(text, is_credit_note=is_credit_note)
 
         # If no date found, try extracting from header region
         # (some invoices have dates in table headers that full-page OCR misses)
         if not invoice_date:
             header_text = self.extract_header_text(image)
-            invoice_date = self.extract_invoice_date(header_text)
+            invoice_date = self.extract_invoice_date(header_text, is_credit_note=is_credit_note)
+
+        result = None
 
         # 1. NIF matching - most reliable
-        result = self.classify_by_nif(text)
-        if result and result.confidence >= 0.9:
-            result.invoice_date = invoice_date
-            result.ocr_text = text
+        nif_result = self.classify_by_nif(text)
+        if nif_result and nif_result.confidence >= 0.9:
+            result = nif_result
             logger.info(f"Classified by NIF: {result.supplier} ({result.confidence:.2f}), date: {invoice_date}")
-            return result
 
-        # 2. Template matching
-        template_result = self.classify_by_template(image)
+        if result is None:
+            # 2. Template matching
+            template_result = self.classify_by_template(image)
 
-        # 3. Keyword matching
-        keyword_result = self.classify_by_keywords(text)
+            # 3. Keyword matching
+            keyword_result = self.classify_by_keywords(text)
 
-        # Combine results - prefer template if both available and agree
-        if template_result and keyword_result:
-            if template_result.supplier == keyword_result.supplier:
-                # Both methods agree - high confidence
-                return ClassificationResult(
-                    supplier=template_result.supplier,
-                    confidence=max(template_result.confidence, keyword_result.confidence) + 0.1,
-                    method='hybrid',
-                    details={
-                        'template': template_result.details,
-                        'keywords': keyword_result.details
-                    },
-                    invoice_date=invoice_date,
-                    ocr_text=text
-                )
-            else:
-                # Disagreement - use the one with higher confidence
-                if template_result.confidence > keyword_result.confidence:
-                    template_result.invoice_date = invoice_date
-                    template_result.ocr_text = text
-                    return template_result
+            # Combine results - prefer template if both available and agree
+            if template_result and keyword_result:
+                if template_result.supplier == keyword_result.supplier:
+                    result = ClassificationResult(
+                        supplier=template_result.supplier,
+                        confidence=max(template_result.confidence, keyword_result.confidence) + 0.1,
+                        method='hybrid',
+                        details={
+                            'template': template_result.details,
+                            'keywords': keyword_result.details
+                        },
+                    )
+                elif template_result.confidence > keyword_result.confidence:
+                    result = template_result
                 else:
-                    keyword_result.invoice_date = invoice_date
-                    keyword_result.ocr_text = text
-                    return keyword_result
+                    result = keyword_result
+            elif template_result:
+                result = template_result
+            elif keyword_result:
+                result = keyword_result
 
-        # Return whichever worked
-        if template_result:
-            template_result.invoice_date = invoice_date
-            template_result.ocr_text = text
-            return template_result
-        if keyword_result:
-            keyword_result.invoice_date = invoice_date
-            keyword_result.ocr_text = text
-            return keyword_result
+        if result is None:
+            result = ClassificationResult(
+                supplier='unknown',
+                confidence=0.0,
+                method='none',
+                details={'text_sample': text[:500]},
+            )
 
-        # Fallback - unknown
-        return ClassificationResult(
-            supplier='unknown',
-            confidence=0.0,
-            method='none',
-            details={'text_sample': text[:500]},
-            invoice_date=invoice_date,
-            ocr_text=text
-        )
+        # Set common fields
+        result.invoice_date = invoice_date
+        result.ocr_text = text
+
+        # Post-classification: detect document type suffix
+        if result.supplier != 'unknown':
+            result.supplier = self._detect_document_type_suffix(result.supplier, text)
+
+        return result
 
     def classify_batch(self, folder: Path) -> dict[str, ClassificationResult]:
         """

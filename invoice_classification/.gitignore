@@ -4,11 +4,16 @@ invoices_test/
 INTEGRATED/
 MATCHED/
 REVIEW/
+RECHECK/
 LIDL/
 live_test/
 new_invoices_to_process/
 teofilo_nc/
 old/
+
+# Local recheck test scripts
+recheck_diag.py
+recheck_test.py
 
 # Config with secrets (use config.example.json as template)
 config.json
