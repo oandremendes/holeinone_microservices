@@ -1,5 +1,8 @@
+import io
+import numpy as np
 import pymupdf
 import zxingcpp
+from PIL import Image
 import qr
 
 PAYLOAD = ('A:504350900*B:508179947*C:PT*D:FT*E:N*F:20260315*'
@@ -34,10 +37,11 @@ def _make_pdf(tmp_path, payloads):
     """PDF with one QR image per payload, one per page."""
     doc = pymupdf.open()
     for text in payloads:
-        img = zxingcpp.write_barcode(zxingcpp.BarcodeFormat.QRCode, text, 400, 400)
-        import PIL.Image, io
+        barcode = zxingcpp.create_barcode(text, zxingcpp.BarcodeFormat.QRCode)
+        img_zx = zxingcpp.write_barcode_to_image(barcode, scale=14)
+        img_array = np.array(img_zx)
         buf = io.BytesIO()
-        PIL.Image.fromarray(img).save(buf, format='PNG')
+        Image.fromarray(img_array, mode='L').save(buf, format='PNG')
         page = doc.new_page(width=595, height=842)
         page.insert_image(pymupdf.Rect(100, 100, 400, 400), stream=buf.getvalue())
     out = tmp_path / 'test.pdf'
