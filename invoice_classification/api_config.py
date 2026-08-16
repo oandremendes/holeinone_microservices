@@ -137,3 +137,24 @@ def is_parseur_configured() -> bool:
 def is_docupipe_configured() -> bool:
     """Check if Docupipe API key is configured."""
     return bool(DOCUPIPE_API_KEY)
+
+
+def get_anthropic(config=None):
+    """Get Anthropic API configuration with defaults."""
+    cfg = (config if config is not None else _load_config()).get('anthropic', {})
+    return {'api_key': cfg.get('api_key'),
+            'model': cfg.get('model', 'claude-opus-5')}
+
+
+def get_odoo(config=None):
+    """Get Odoo webhook configuration with defaults."""
+    cfg = (config if config is not None else _load_config()).get('odoo', {})
+    return {'webhook_url': cfg.get('webhook_url'),
+            'api_key': cfg.get('api_key'),
+            'drive_remote': cfg.get('drive_remote', 'gdrive:ScanSnap')}
+
+
+def legacy_apis_enabled(config=None):
+    """Check if legacy APIs are enabled in configuration."""
+    cfg = config if config is not None else _load_config()
+    return bool(cfg.get('legacy_apis', {}).get('enabled', False))

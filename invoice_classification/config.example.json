@@ -1,8 +1,8 @@
 {
-  "parseur": {
-    "api_key": "YOUR_PARSEUR_API_KEY_HERE"
-  },
-  "docupipe": {
-    "api_key": "YOUR_DOCUPIPE_API_KEY_HERE"
-  }
+  "parseur":  {"api_key": "YOUR_PARSEUR_KEY"},
+  "docupipe": {"api_key": "YOUR_DOCUPIPE_KEY"},
+  "legacy_apis": {"enabled": false},
+  "anthropic": {"api_key": "YOUR_ANTHROPIC_KEY", "model": "claude-opus-5"},
+  "odoo": {"webhook_url": "https://YOUR_ODOO_HOST", "api_key": "YOUR_ODOO_WEBHOOK_KEY",
+           "drive_remote": "gdrive:ScanSnap"}
 }
