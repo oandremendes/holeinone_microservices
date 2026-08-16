@@ -6,7 +6,7 @@ pdf2image>=1.16.0
 PyPDF2>=3.0.0
 
 # Image processing
-opencv-python>=4.8.0
+opencv-contrib-python-headless>=4.8.0
 Pillow>=10.0.0
 numpy>=1.24.0
 scikit-image>=0.21.0
@@ -22,3 +22,14 @@ watchdog>=3.0.0
 
 # API clients
 requests>=2.31.0
+
+# QR decoding (v2)
+pymupdf>=1.24.0
+zxing-cpp>=2.2.0
+
+# Claude extraction (v2)
+anthropic>=0.100.0
+pydantic>=2.0.0
+
+# Tests
+pytest>=8.0.0
