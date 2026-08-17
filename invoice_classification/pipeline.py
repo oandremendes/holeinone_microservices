@@ -1,5 +1,6 @@
 """v2 pipeline: Phase A (identify/dedup/enqueue) and Phase B (drain queue)."""
 import hashlib
+import json
 import logging
 import shutil
 from dataclasses import dataclass, field
@@ -171,3 +172,109 @@ def handle_new_file(pdf_path, conn, dirs, ocr_fallback, dry_run=False):
     if verdict == 'supersede':
         state.supersede(conn, original['id'], fid)
     return {'action': action, 'new_name': dest.name, 'file_id': fid}
+
+
+def file_into_month(path, integrated_dir, doc_date):
+    year, month = doc_date[:4], doc_date[5:7]
+    target = Path(integrated_dir) / year / month
+    target.mkdir(parents=True, exist_ok=True)
+    dest = _unique_dest(target, Path(path).stem)
+    shutil.move(str(path), str(dest))
+    return dest
+
+
+def _primary_qr(conn, file_id):
+    row = conn.execute("SELECT parsed_json FROM qr_codes WHERE file_id=? AND"
+                       " is_primary=1", (file_id,)).fetchone()
+    return json.loads(row['parsed_json']) if row else None
+
+
+def _default_extractor(pdf_path, supplier):
+    import api_config
+    import claude_extract
+    cfg = api_config.get_anthropic()
+    return claude_extract.extract(pdf_path, supplier, api_key=cfg['api_key'])
+
+
+def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
+          cap=5, dry_run=False):
+    import claude_extract
+    import artifacts
+    import odoo_send
+    import validation
+
+    extractor = extractor or _default_extractor
+    resolver = resolver or odoo_send.resolve_drive_id
+    stats = {'extracted': 0, 'sent': 0, 'needs_review': 0, 'retried': 0, 'failed': 0}
+
+    for row in state.pending(conn, cap=cap):
+        fid = row['id']
+        attempts = row['attempts'] + 1
+        if dry_run:
+            logger.info(f"[DRY RUN] would extract {row['current_path']}")
+            continue
+        try:
+            result, raw_json = extractor(row['current_path'], row['supplier_key'])
+        except claude_extract.PermanentExtractionError as e:
+            state.record_error(conn, fid, str(e), cap=cap, permanent=True)
+            stats['failed'] += 1
+            continue
+        except Exception as e:
+            state.record_error(conn, fid, str(e), cap=cap)
+            new_status = conn.execute("SELECT status FROM files WHERE id=?",
+                                      (fid,)).fetchone()[0]
+            stats['retried' if new_status == 'retry' else 'failed'] += 1
+            continue
+
+        stats['extracted'] += 1
+        extraction = result.model_dump()
+        qr_fields = _primary_qr(conn, fid)
+        verdict = validation.validate(extraction, qr_fields, row['supplier_key'])
+        state.save_extraction(conn, fid, claude_extract.MODEL, raw_json,
+                              json.dumps(verdict))
+        row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+        basename = Path(row['current_path']).stem
+
+        if verdict['status'] != 'ok':
+            state.set_status(conn, fid, 'needs_review')
+            stats['needs_review'] += 1
+            art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
+                                           {'sent_at': None, 'status': 'held'},
+                                           claude_extract.MODEL, attempts)
+            artifacts.write_json(dirs['extracted'], basename, art)
+            continue
+
+        # validated: file into YYYY/MM before resolving the Drive link
+        try:
+            doc_date = row['doc_date'] or extraction.get('date')
+            new_path = file_into_month(row['current_path'], dirs['integrated'],
+                                       doc_date)
+            state.update_path(conn, fid, new_path)
+            row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+            marker = '/ScanSnap/'
+            rel = (str(new_path).split(marker, 1)[1] if marker in str(new_path)
+                   else Path(new_path).name)
+            drive_id = resolver(f"{odoo_cfg['drive_remote']}/{rel}")
+            url = odoo_send.drive_preview_url(drive_id) if drive_id else None
+            payload = odoo_send.build_payload(dict(row), extraction, document_url=url)
+            odoo_result = odoo_send.send(payload, odoo_cfg['webhook_url'],
+                                         odoo_cfg['api_key'], poster=poster)
+        except Exception as e:
+            state.record_error(conn, fid, f'odoo/filing: {e}', cap=cap)
+            stats['retried'] += 1
+            art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
+                                           {'sent_at': None, 'status': None},
+                                           claude_extract.MODEL, attempts)
+            artifacts.write_json(dirs['extracted'], basename, art)
+            continue
+
+        state.mark_sent(conn, fid, json.dumps(odoo_result))
+        sent_row = conn.execute("SELECT odoo_sent_at FROM extractions WHERE"
+                                " file_id=?", (fid,)).fetchone()
+        art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
+                                       {'sent_at': sent_row['odoo_sent_at'],
+                                        'status': 'sent'},
+                                       claude_extract.MODEL, attempts)
+        artifacts.write_json(dirs['extracted'], basename, art)
+        stats['sent'] += 1
+    return stats
