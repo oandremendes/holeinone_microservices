@@ -6,7 +6,6 @@ Classifies scanned invoices by supplier to route to appropriate OCR APIs.
 
 import os
 import re
-import shutil
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
@@ -1384,6 +1383,34 @@ def _has_integration(supplier: str) -> bool:
     return False
 
 
+import pipeline
+import state
+
+
+def _ocr_classify(classifier, pdf_path):
+    """Adapter: Tesseract pipeline -> (supplier_key_or_'unknown', YYYYMMDD|None)."""
+    result = classifier.classify(Path(pdf_path))
+    return result.supplier, result.invoice_date
+
+
+def _dirs_for_source(source_dir: Path) -> dict:
+    """Build the v2 pipeline dirs layout for a given ScanSnap source folder."""
+    source_dir = Path(source_dir)
+    if source_dir.name == 'ScanSnap':
+        scansnap_root = source_dir
+        duplicados = source_dir.parent / 'Duplicados'
+    else:
+        # e.g. .../ScanSnap/Receipts -> ScanSnap root is the parent
+        scansnap_root = source_dir.parent
+        duplicados = source_dir / 'Duplicados'
+    return {
+        'integrated': source_dir / 'INTEGRATED',
+        'review': source_dir / 'REVIEW',
+        'duplicados': duplicados,
+        'extracted': scansnap_root / 'EXTRACTED',
+    }
+
+
 def process_and_move(
     classifier: InvoiceClassifier,
     source_dir: Path,
@@ -1391,145 +1418,99 @@ def process_and_move(
     review_dir: Path,
     integrated_dir: Path,
     dry_run: bool = False,
-    upload: bool = False
+    upload: bool = False,
+    conn=None,
+    dirs_extra: Optional[dict] = None,
 ) -> dict:
     """
-    Process all PDFs in source directory, rename and move them.
-
-    Integrated invoices: YYYYMMDD_Supplier.pdf -> INTEGRATED/ (has API workflow/mailbox)
-    Matched invoices: YYYYMMDD_Supplier.pdf -> MATCHED/ (no API workflow/mailbox)
-    Unknown invoices: original name -> REVIEW/
+    Process all PDFs in source directory via the v2 pipeline (QR-first
+    identification with OCR fallback, dedup, and queueing for Phase B).
 
     Args:
         classifier: InvoiceClassifier instance
         source_dir: Directory containing PDFs to process
-        matched_dir: Directory for matched/classified invoices without integration
-        review_dir: Directory for unknown invoices needing review
-        integrated_dir: Directory for matched invoices with API workflow/mailbox
+        matched_dir: Unused for new files (kept for caller compatibility)
+        review_dir: Directory for unidentified invoices needing review
+        integrated_dir: Directory for identified/queued invoices
         dry_run: If True, only show what would happen without moving files
-        upload: If True, upload classified invoices to OCR API
+        upload: If True, run the legacy OCR API upload (gated by
+            api_config.legacy_apis_enabled())
+        conn: Open state DB connection; opens/seeds state.db next to this
+            file when None (production default)
+        dirs_extra: Full v2 pipeline dirs dict (integrated/review/duplicados/
+            extracted); built from source_dir per the standard layout when None
 
     Returns:
         Dict with processing statistics
     """
-    # Ensure output directories exist
-    matched_dir.mkdir(exist_ok=True)
-    review_dir.mkdir(exist_ok=True)
-    integrated_dir.mkdir(exist_ok=True)
+    own_conn = conn is None
+    if own_conn:
+        conn = state.connect(Path(__file__).parent / 'state.db')
+        state.seed_suppliers(conn, {k: (p.nif, p.display_name)
+                                    for k, p in InvoiceClassifier.SUPPLIERS.items()})
+
+    if dirs_extra is None:
+        dirs_extra = _dirs_for_source(source_dir)
+
+    for d in (dirs_extra['integrated'], dirs_extra['review'],
+              dirs_extra['duplicados'], dirs_extra['extracted']):
+        d.mkdir(parents=True, exist_ok=True)
 
     stats = {
         'total': 0,
         'integrated': 0,
-        'matched': 0,
         'review': 0,
+        'duplicate': 0,
         'errors': 0,
-        'uploaded': 0,
-        'upload_failed': 0,
         'files': []
     }
 
-    current_year = datetime.now().year
-
     pdf_files = list(source_dir.glob('*.pdf')) + list(source_dir.glob('*.PDF'))
 
-    for pdf_path in pdf_files:
-        stats['total'] += 1
+    try:
+        for pdf_path in pdf_files:
+            stats['total'] += 1
 
-        try:
-            # Classify the invoice
-            result = classifier.classify(pdf_path)
+            try:
+                out = pipeline.handle_new_file(
+                    pdf_path, conn, dirs_extra,
+                    ocr_fallback=lambda p: _ocr_classify(classifier, p),
+                    dry_run=dry_run)
+                action = out['action']
+                key = {'INTEGRATED': 'integrated', 'SUPERSEDE': 'integrated',
+                       'REVIEW': 'review', 'DUPLICATE': 'duplicate'}[action]
+                stats[key] = stats.get(key, 0) + 1
+                stats['files'].append({'original': pdf_path.name,
+                                       'new_name': out['new_name'], 'action': action})
+                logger.info(f"{pdf_path.name} -> {action}/{out['new_name']}")
 
-            if result.supplier != 'unknown':
-                # Build new filename: YYYYMMDD_Supplier.pdf
-                if result.invoice_date:
-                    date_part = result.invoice_date
-                else:
-                    date_part = f"{current_year}XXXX"
-
-                # Capitalize supplier name properly
-                supplier_name = result.supplier.capitalize()
-
-                # Choose destination: INTEGRATED (has workflow/mailbox) or MATCHED
-                has_api = _has_integration(result.supplier)
-                target_dir = integrated_dir if has_api else matched_dir
-
-                # Handle duplicate filenames by adding a counter
-                new_filename = f"{date_part}_{supplier_name}.pdf"
-                dest_path = target_dir / new_filename
-
-                counter = 1
-                while dest_path.exists():
-                    new_filename = f"{date_part}_{supplier_name}_{counter}.pdf"
-                    dest_path = target_dir / new_filename
-                    counter += 1
-
-                if has_api:
-                    stats['integrated'] += 1
-                    action = 'INTEGRATED'
-                else:
-                    stats['matched'] += 1
-                    action = 'MATCHED'
-            else:
-                # Unknown - move to review with original name
-                new_filename = pdf_path.name
-                dest_path = review_dir / new_filename
-
-                # Handle duplicates
-                counter = 1
-                while dest_path.exists():
-                    stem = pdf_path.stem
-                    new_filename = f"{stem}_{counter}.pdf"
-                    dest_path = review_dir / new_filename
-                    counter += 1
-
-                stats['review'] += 1
-                action = 'REVIEW'
-
-            # Log the action
-            file_info = {
-                'original': pdf_path.name,
-                'new_name': new_filename,
-                'supplier': result.supplier,
-                'confidence': result.confidence,
-                'date': result.invoice_date,
-                'action': action,
-                'dest': str(dest_path)
-            }
-            stats['files'].append(file_info)
-
-            if dry_run:
-                logger.info(f"[DRY RUN] {pdf_path.name} -> {action}/{new_filename}")
-                if upload and action == 'INTEGRATED':
-                    logger.info(f"[DRY RUN] Would upload to API for supplier: {result.supplier}")
-            else:
-                shutil.move(str(pdf_path), str(dest_path))
-                logger.info(f"{pdf_path.name} -> {action}/{new_filename}")
-
-                # Upload to OCR API if enabled and has integration
-                if upload and action == 'INTEGRATED':
-                    upload_result = upload_to_api(dest_path, result.supplier)
-                    file_info['upload'] = upload_result
-                    if upload_result['success']:
-                        stats['uploaded'] += 1
-                        provider = upload_result.get('provider', '?')
-                        if provider == 'parseur':
-                            logger.info(f"  -> Uploaded to Parseur mailbox {upload_result.get('mailbox_id', '?')}")
-                        elif provider == 'docupipe':
-                            logger.info(f"  -> Uploaded to Docupipe (doc_id: {upload_result.get('document_id', '?')})")
+                if upload and action in ('INTEGRATED', 'SUPERSEDE') and not dry_run:
+                    import api_config
+                    if api_config.legacy_apis_enabled():
+                        dest = dirs_extra['integrated'] / out['new_name']
+                        upload_result = upload_to_api(dest, 'unknown')
+                        if upload_result['success']:
+                            provider = upload_result.get('provider', '?')
+                            if provider == 'parseur':
+                                logger.info(f"  -> Uploaded to Parseur mailbox {upload_result.get('mailbox_id', '?')}")
+                            elif provider == 'docupipe':
+                                logger.info(f"  -> Uploaded to Docupipe (doc_id: {upload_result.get('document_id', '?')})")
+                            else:
+                                logger.info(f"  -> Uploaded to {provider}")
                         else:
-                            logger.info(f"  -> Uploaded to {provider}")
-                    else:
-                        stats['upload_failed'] += 1
-                        logger.warning(f"  -> Upload failed: {upload_result['message']}")
+                            logger.warning(f"  -> Upload failed: {upload_result['message']}")
 
-        except Exception as e:
-            stats['errors'] += 1
-            logger.error(f"Error processing {pdf_path.name}: {e}")
-            stats['files'].append({
-                'original': pdf_path.name,
-                'error': str(e),
-                'action': 'ERROR'
-            })
+            except Exception as e:
+                stats['errors'] += 1
+                logger.error(f"Error processing {pdf_path.name}: {e}")
+                stats['files'].append({
+                    'original': pdf_path.name,
+                    'error': str(e),
+                    'action': 'ERROR'
+                })
+    finally:
+        if own_conn:
+            conn.close()
 
     return stats
 
@@ -1676,8 +1657,10 @@ Default folder: invoices_example/
             generate_templates(invoices_dir, templates_dir)
 
         elif command == 'process':
-            # Check API config if upload requested
-            if upload and not dry_run:
+            # Check API config if upload requested (legacy Parseur/Docupipe
+            # path only -- neutralized unless api_config.legacy_apis_enabled())
+            import api_config
+            if upload and not dry_run and api_config.legacy_apis_enabled():
                 from api_config import is_parseur_configured, is_docupipe_configured
                 missing = []
                 if not is_parseur_configured():
@@ -1716,17 +1699,21 @@ Default folder: invoices_example/
             print("="*70)
             print(f"Total processed: {stats['total']}")
             print(f"Integrated (-> INTEGRATED/): {stats['integrated']}")
-            print(f"Matched (-> MATCHED/): {stats['matched']}")
             print(f"For review (-> REVIEW/): {stats['review']}")
+            print(f"Duplicates: {stats['duplicate']}")
             print(f"Errors: {stats['errors']}")
-
-            if upload:
-                print(f"Uploaded to API: {stats['uploaded']}")
-                if stats['upload_failed'] > 0:
-                    print(f"Upload failed: {stats['upload_failed']}")
 
             if dry_run:
                 print("\n[DRY RUN] No files were moved. Run without --dry-run to process.")
+
+            # Phase B: drain the extraction/Odoo queue for this ScanSnap root
+            conn = state.connect(Path(__file__).parent / 'state.db')
+            dirs_extra = _dirs_for_source(invoices_dir)
+            drain_stats = pipeline.drain(conn, dirs_extra, api_config.get_odoo(),
+                                         dry_run=dry_run)
+            conn.close()
+            logger.info(f"Drain: {drain_stats}")
+            print(f"\nDrain: {drain_stats}")
 
         elif command == '-h':
             print_usage()

@@ -1,0 +1,41 @@
+import classifier as clf
+import pipeline
+import state
+
+
+class FakeClassifier:
+    def classify(self, pdf_path):
+        from classifier import ClassificationResult
+        return ClassificationResult(supplier='teofilo', confidence=0.95,
+                                    method='ocr', details={},
+                                    invoice_date='20260120')
+
+
+def test_process_and_move_enqueues_via_pipeline(conn, tmp_path, monkeypatch):
+    src = tmp_path / 'ScanSnap'
+    src.mkdir()
+    (src / 'scan.pdf').write_bytes(b'%PDF x')
+    dirs = {'integrated': src / 'INTEGRATED', 'review': src / 'REVIEW',
+            'duplicados': tmp_path / 'Duplicados', 'extracted': src / 'EXTRACTED'}
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [])
+    stats = clf.process_and_move(FakeClassifier(), src, src / 'MATCHED',
+                                 dirs['review'], dirs['integrated'],
+                                 conn=conn, dirs_extra=dirs)
+    assert stats['integrated'] == 1
+    assert (dirs['integrated'] / '20260120_Teofilo.pdf').exists()
+    assert len(state.pending(conn)) == 1
+
+
+def test_legacy_upload_not_called_by_default(conn, tmp_path, monkeypatch):
+    src = tmp_path / 'ScanSnap'
+    src.mkdir()
+    (src / 'scan.pdf').write_bytes(b'%PDF x')
+    called = []
+    monkeypatch.setattr(clf, 'upload_to_api', lambda *a: called.append(a) or
+                        {'success': True})
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [])
+    dirs = {'integrated': src / 'INTEGRATED', 'review': src / 'REVIEW',
+            'duplicados': tmp_path / 'Duplicados', 'extracted': src / 'EXTRACTED'}
+    clf.process_and_move(FakeClassifier(), src, src / 'MATCHED', dirs['review'],
+                         dirs['integrated'], upload=True, conn=conn, dirs_extra=dirs)
+    assert called == []   # neutralized: legacy_apis_enabled() is False by default
