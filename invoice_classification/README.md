@@ -4,12 +4,16 @@ Automated invoice classification for scanned documents from ScanSnap ix-1600. Id
 
 ## Features
 
-- **Supplier Classification**: Identifies invoices and receipts from 65+ suppliers using NIF (tax ID) matching
-- **Date Extraction**: Extracts invoice/receipt issue date from OCR text (multiple formats supported)
+- **QR-First Identification**: Reads the Portuguese e-Fatura QR code (via `zxing-cpp`) as the primary identification signal, with Tesseract OCR/NIF/keyword matching as fallback when no QR code is present or decodable
+- **Claude Extraction**: Structured invoice data (supplier, date, totals, line items) is extracted by Claude (`claude-opus-5`) instead of the legacy OCR APIs
+- **SQLite Retry Queue**: Extraction and delivery failures are queued in `state.db` and retried automatically, capped at 5 attempts before being marked permanently failed
+- **QR-Gated Odoo Delivery**: Only invoices successfully identified via QR are sent on to Odoo as draft bills; everything else is held back for review
+- **JSON Artifacts**: Every processed invoice writes its extracted data to `EXTRACTED/*.json` alongside the PDF for auditability
+- **Date-Based Filing**: Integrated invoices are filed under `INTEGRATED/YYYY/MM/` by invoice date
+- **Dedup with Supersede**: Duplicate detection by md5 hash and QR payload; a re-scanned invoice supersedes the previously queued/sent record instead of creating a duplicate entry
+- **Legacy APIs Neutralized**: Parseur and Docupipe integrations are preserved in code but disabled by default; re-enable via `legacy_apis.enabled` in `config.json`
 - **File Organization**: Renames files to `YYYYMMDD_Supplier.pdf` and moves to appropriate folders
-- **Dual API Support**: Routes invoices to Parseur, receipts to Docupipe (with workflow support)
 - **Automatic Processing**: Systemd timer monitors Google Drive folders and processes new files
-- **~90% Accuracy**: Reliable classification using Portuguese tax ID (NIF) as primary identifier
 
 ## Supported Suppliers
 
@@ -364,3 +368,14 @@ System requirements:
 - **poppler-utils**: PDF rendering (`pdftoppm`)
 - **tesseract-ocr**: OCR engine
 - **tesseract-ocr-por**: Portuguese language pack
+
+## Acceptance test (manual)
+
+1. Copy 3-5 PDFs from the reserved QA test set into a scratch folder.
+2. `python classifier.py process /path/to/scratch --dry-run` — verify intended
+   actions in the log (no moves, no API calls).
+3. `python classifier.py process /path/to/scratch` — verify: files land in
+   INTEGRATED/YYYY/MM/, EXTRACTED/*.json written, Odoo drafts created,
+   `sqlite3 state.db "SELECT id,status,supplier_key FROM files"` shows 'sent'.
+4. Re-copy one of the same PDFs and re-run: it must land in Duplicados/ with
+   status 'duplicate'.

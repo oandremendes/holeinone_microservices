@@ -153,6 +153,7 @@ rsync -a --delete \
     --exclude='templates/' \
     --exclude='.claude/' \
     --exclude='config.json' \
+    --exclude='state.db*' \
     --exclude='drivek.json' \
     --exclude='*-service-account.json' \
     --exclude='deploy.sh' \
@@ -255,6 +256,12 @@ umount -l "${GDRIVE_MOUNT}" 2>/dev/null || true
 # Create mount point
 mkdir -p "${GDRIVE_MOUNT}"
 chown "${APP_USER}:${APP_USER}" "${GDRIVE_MOUNT}"
+
+# Create v2 pipeline folders (INTEGRATED/REVIEW are created lazily by
+# classifier.py per source dir; EXTRACTED and Duplicados are pre-created
+# here so they exist with correct ownership even before the first run)
+sudo -u "${APP_USER}" mkdir -p "${GDRIVE_MOUNT}/ScanSnap/EXTRACTED" "${GDRIVE_MOUNT}/Duplicados"
+ok "EXTRACTED and Duplicados folders ready"
 
 #############################################
 # Step 7: Processing script
