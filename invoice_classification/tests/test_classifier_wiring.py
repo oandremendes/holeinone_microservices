@@ -1,6 +1,7 @@
 import classifier as clf
 import pipeline
 import state
+import api_config
 
 
 class FakeClassifier:
@@ -39,3 +40,20 @@ def test_legacy_upload_not_called_by_default(conn, tmp_path, monkeypatch):
     clf.process_and_move(FakeClassifier(), src, src / 'MATCHED', dirs['review'],
                          dirs['integrated'], upload=True, conn=conn, dirs_extra=dirs)
     assert called == []   # neutralized: legacy_apis_enabled() is False by default
+
+
+def test_legacy_upload_uses_real_supplier_key(conn, tmp_path, monkeypatch):
+    src = tmp_path / 'ScanSnap'
+    src.mkdir()
+    (src / 'scan.pdf').write_bytes(b'%PDF x')
+    called = []
+    monkeypatch.setattr(clf, 'upload_to_api', lambda *a: called.append(a) or
+                        {'success': True})
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [])
+    monkeypatch.setattr(api_config, 'legacy_apis_enabled', lambda *a, **k: True)
+    dirs = {'integrated': src / 'INTEGRATED', 'review': src / 'REVIEW',
+            'duplicados': tmp_path / 'Duplicados', 'extracted': src / 'EXTRACTED'}
+    clf.process_and_move(FakeClassifier(), src, src / 'MATCHED', dirs['review'],
+                         dirs['integrated'], upload=True, conn=conn, dirs_extra=dirs)
+    assert len(called) == 1
+    assert called[0][1] == 'teofilo'

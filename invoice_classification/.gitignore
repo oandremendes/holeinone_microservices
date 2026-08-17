@@ -44,3 +44,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# v2 pipeline state DB (and WAL/SHM sidecar files)
+state.db*

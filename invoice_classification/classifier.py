@@ -1488,7 +1488,11 @@ def process_and_move(
                     import api_config
                     if api_config.legacy_apis_enabled():
                         dest = dirs_extra['integrated'] / out['new_name']
-                        upload_result = upload_to_api(dest, 'unknown')
+                        row = conn.execute("SELECT supplier_key FROM files WHERE"
+                                           " id=?", (out['file_id'],)).fetchone()
+                        supplier_key = (row['supplier_key'] if row
+                                        and row['supplier_key'] else 'unknown')
+                        upload_result = upload_to_api(dest, supplier_key)
                         if upload_result['success']:
                             provider = upload_result.get('provider', '?')
                             if provider == 'parseur':
