@@ -33,7 +33,7 @@ class Identified:
     qr_hits: list = field(default_factory=list)
 
 
-def identify(pdf_path, conn, ocr_fallback):
+def identify(pdf_path, conn, ocr_fallback, dry_run=False):
     hits = qr_decode(pdf_path)
     if hits:
         f = hits[0].fields          # primary = first fiscal QR
@@ -41,7 +41,10 @@ def identify(pdf_path, conn, ocr_fallback):
         sup = state.supplier_for_nif(conn, nif) if nif else None
         if sup is None and nif:
             key = f'nif{nif}'
-            state.register_supplier(conn, nif, key, f'NIF {nif}')
+            if dry_run:
+                logger.info('[DRY RUN] would register_supplier nif=%s key=%s', nif, key)
+            else:
+                state.register_supplier(conn, nif, key, f'NIF {nif}')
         else:
             key = sup['supplier_key'] if sup else 'unknown'
         # guard against a double "_nc": only append the credit-note suffix
@@ -94,15 +97,27 @@ def _unique_dest(target_dir, stem, ext='.pdf'):
 
 
 def handle_new_file(pdf_path, conn, dirs, ocr_fallback, dry_run=False):
+    """Full Phase A for one file. When dry_run=True this is a complete no-op
+    on persistent state: no file is moved and no row is written/updated in
+    any table (files, qr_codes, suppliers) -- only the would-be action dict
+    is computed and returned (with file_id=None), and [DRY RUN] lines are
+    logged instead of mutating. This lets the acceptance procedure run
+    --dry-run first and then a live run over the same input files without
+    the dry run polluting dedup state (e.g. spurious md5 rows that would
+    make the live run see everything as a duplicate).
+    """
     pdf_path = Path(pdf_path)
     md5 = file_md5(pdf_path)
-    ident = identify(pdf_path, conn, ocr_fallback)
+    ident = identify(pdf_path, conn, ocr_fallback, dry_run=dry_run)
     verdict, original = check_duplicate(conn, md5, ident)
 
     if verdict == 'duplicate':
         dest = _unique_dest(dirs['duplicados'], pdf_path.stem)
-        if not dry_run:
-            shutil.move(str(pdf_path), str(dest))
+        if dry_run:
+            logger.info('[DRY RUN] would move %s -> %s (duplicate of file_id=%s)',
+                        pdf_path, dest, original['id'])
+            return {'action': 'DUPLICATE', 'new_name': dest.name, 'file_id': None}
+        shutil.move(str(pdf_path), str(dest))
         if original['md5'] == md5:
             # exact-bytes duplicate: files.md5 is UNIQUE, so there is no
             # new row to insert -- just move the file and point at the original
@@ -117,12 +132,15 @@ def handle_new_file(pdf_path, conn, dirs, ocr_fallback, dry_run=False):
         return {'action': 'DUPLICATE', 'new_name': dest.name, 'file_id': fid}
 
     # supersede: move the bad original out of the way first
-    if verdict == 'supersede' and not dry_run:
-        old_path = Path(original['current_path'])
-        if old_path.exists():
-            old_dest = _unique_dest(dirs['duplicados'], old_path.stem)
-            shutil.move(str(old_path), str(old_dest))
-            state.update_path(conn, original['id'], old_dest)
+    if verdict == 'supersede':
+        if dry_run:
+            logger.info('[DRY RUN] would supersede original file_id=%s', original['id'])
+        else:
+            old_path = Path(original['current_path'])
+            if old_path.exists():
+                old_dest = _unique_dest(dirs['duplicados'], old_path.stem)
+                shutil.move(str(old_path), str(old_dest))
+                state.update_path(conn, original['id'], old_dest)
 
     if ident.supplier_key != 'unknown':
         date_part = (ident.doc_date.replace('-', '') if ident.doc_date
@@ -134,8 +152,14 @@ def handle_new_file(pdf_path, conn, dirs, ocr_fallback, dry_run=False):
         dest = _unique_dest(dirs['review'], pdf_path.stem)
         action, status = 'REVIEW', 'review_folder'
 
-    if not dry_run:
-        shutil.move(str(pdf_path), str(dest))
+    if verdict == 'supersede':
+        action = 'SUPERSEDE'
+
+    if dry_run:
+        logger.info('[DRY RUN] would move %s -> %s (%s)', pdf_path, dest, action)
+        return {'action': action, 'new_name': dest.name, 'file_id': None}
+
+    shutil.move(str(pdf_path), str(dest))
     fid = state.insert_file(conn, md5=md5, original_name=pdf_path.name,
                             current_path=str(dest), nif=ident.nif,
                             atcud=ident.atcud, doc_ref=ident.doc_ref,
@@ -146,5 +170,4 @@ def handle_new_file(pdf_path, conn, dirs, ocr_fallback, dry_run=False):
         state.add_qr(conn, fid, hit.page, hit.raw, hit.fields, is_primary=(i == 0))
     if verdict == 'supersede':
         state.supersede(conn, original['id'], fid)
-        action = 'SUPERSEDE'
     return {'action': action, 'new_name': dest.name, 'file_id': fid}

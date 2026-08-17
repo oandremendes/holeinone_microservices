@@ -6,6 +6,9 @@ from qr import QrHit, parse_payload
 PAYLOAD = ('A:504350900*B:508179947*C:PT*D:FT*E:N*F:20260315*'
            'G:FT FT100/011485*H:JFZ4PTHN-011485*N:72.35*O:446.93')
 
+NC_PAYLOAD = ('A:504350900*B:508179947*C:PT*D:NC*E:N*F:20260315*'
+              'G:NC NC100/000045*H:JFZ4PTHN-000045*N:72.35*O:446.93')
+
 
 @pytest.fixture
 def dirs(tmp_path):
@@ -95,3 +98,24 @@ def test_rescan_supersedes_failed_original(conn, dirs, tmp_path, monkeypatch):
     assert (dirs['duplicados'] / '20260315_Novadis.pdf').exists()  # old file moved out
     new_row = conn.execute("SELECT * FROM files WHERE id=?", (out['file_id'],)).fetchone()
     assert new_row['status'] == 'queued'
+
+
+def test_dry_run_is_read_only(conn, dirs, tmp_path, monkeypatch):
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [_hit()])
+    pdf = _pdf(tmp_path)
+    out = pipeline.handle_new_file(pdf, conn, dirs, ocr_fallback=None, dry_run=True)
+    assert out['action'] == 'INTEGRATED'
+    assert out['file_id'] is None
+    assert pdf.exists()                     # source file left in place
+    assert not list(dirs['integrated'].iterdir())   # nothing moved into place
+    assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0] == 0
+
+
+def test_nc_suffix_not_doubled_when_key_already_ends_nc(conn, dirs, tmp_path, monkeypatch):
+    state.seed_suppliers(conn, {'novadis_nc': ('504350900', 'Novadis NC')})
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [_hit(NC_PAYLOAD)])
+    out = pipeline.handle_new_file(_pdf(tmp_path), conn, dirs, ocr_fallback=None)
+    assert out['action'] == 'INTEGRATED'
+    assert out['new_name'].count('_nc') == 1
+    assert out['new_name'] == '20260315_Novadis_nc.pdf'
