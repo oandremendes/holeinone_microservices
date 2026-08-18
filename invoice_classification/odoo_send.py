@@ -79,13 +79,18 @@ def build_payload(file_row, extraction, document_url=None):
     return payload
 
 
-def resolve_drive_id(remote_path, run=None):
-    """ID Drive de um ficheiro via `rclone lsf --format i`; None em falha."""
+def resolve_drive_id(remote_path, run=None, flags=None):
+    """ID Drive de um ficheiro via `rclone lsf --format i`; None em falha.
+
+    `flags`: argumentos extra do rclone — p.ex. ['--drive-shared-with-me']
+    quando a pasta pertence a outra conta e está apenas partilhada com esta
+    (caso do VPS; sem a flag o lsf procura no Drive próprio e falha).
+    """
     if run is None:
         import subprocess
         run = subprocess.run
     try:
-        proc = run(['rclone', 'lsf', '--format', 'i', remote_path],
+        proc = run(['rclone', 'lsf', '--format', 'i', *(flags or []), remote_path],
                    capture_output=True, text=True, timeout=30)
     except Exception:
         return None

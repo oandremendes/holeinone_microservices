@@ -151,7 +151,8 @@ def get_odoo(config=None):
     cfg = (config if config is not None else _load_config()).get('odoo', {})
     return {'webhook_url': cfg.get('webhook_url'),
             'api_key': cfg.get('api_key'),
-            'drive_remote': cfg.get('drive_remote', 'gdrive:ScanSnap')}
+            'drive_remote': cfg.get('drive_remote', 'gdrive:ScanSnap'),
+            'drive_lsf_flags': cfg.get('drive_lsf_flags', [])}
 
 
 def legacy_apis_enabled(config=None):

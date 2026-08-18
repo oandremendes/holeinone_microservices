@@ -42,3 +42,27 @@ def test_send_ok_and_error():
     with pytest.raises(RuntimeError):
         odoo_send.send({}, 'https://odoo.example', 'KEY',
                        poster=lambda *a: {'error': {'message': 'nope'}})
+
+
+def test_resolve_drive_id_passes_flags():
+    seen = {}
+    def run(cmd, **kw):
+        seen['cmd'] = cmd
+        class P: returncode, stdout = 0, 'FILEID123\n'
+        return P()
+    fid = odoo_send.resolve_drive_id('gdrive:ScanSnap/x.pdf', run=run,
+                                     flags=['--drive-shared-with-me'])
+    assert fid == 'FILEID123'
+    assert seen['cmd'][:2] == ['rclone', 'lsf']
+    assert '--drive-shared-with-me' in seen['cmd']
+    assert seen['cmd'][-1] == 'gdrive:ScanSnap/x.pdf'
+
+
+def test_resolve_drive_id_no_flags_backcompat():
+    seen = {}
+    def run(cmd, **kw):
+        seen['cmd'] = cmd
+        class P: returncode, stdout = 0, 'ID\n'
+        return P()
+    assert odoo_send.resolve_drive_id('gdrive:ScanSnap/x.pdf', run=run) == 'ID'
+    assert '--drive-shared-with-me' not in seen['cmd']

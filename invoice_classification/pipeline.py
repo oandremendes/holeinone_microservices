@@ -269,7 +269,9 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
     import validation
 
     extractor = extractor or _default_extractor
-    resolver = resolver or odoo_send.resolve_drive_id
+    if resolver is None:
+        resolver = lambda rp: odoo_send.resolve_drive_id(
+            rp, flags=odoo_cfg.get('drive_lsf_flags'))
     stats = {'extracted': 0, 'sent': 0, 'needs_review': 0, 'retried': 0, 'failed': 0}
 
     for row in state.pending(conn, cap=cap):
