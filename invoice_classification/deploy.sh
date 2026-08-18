@@ -172,17 +172,16 @@ if [[ ! -d "${APP_DIR}/venv" ]]; then
     ok "Virtual environment created"
 else
     ok "Virtual environment already exists"
+    # Drop stale OpenCV variants from earlier deploys so requirements.txt
+    # (opencv-contrib-python-headless, needed for the WeChat QR decoder)
+    # is the one that ends up importable
+    sudo -u "${APP_USER}" "${APP_DIR}/venv/bin/pip" uninstall --quiet -y \
+        opencv-python opencv-python-headless 2>/dev/null || true
 fi
 
-# On headless VPS, use opencv-python-headless instead of opencv-python
-TEMP_REQ=$(mktemp)
-sed 's/opencv-python>=/opencv-python-headless>=/' "${APP_DIR}/requirements.txt" > "${TEMP_REQ}"
-chmod 644 "${TEMP_REQ}"
-
 sudo -u "${APP_USER}" "${APP_DIR}/venv/bin/pip" install --quiet --upgrade pip
-sudo -u "${APP_USER}" "${APP_DIR}/venv/bin/pip" install --quiet -r "${TEMP_REQ}"
-rm -f "${TEMP_REQ}"
-ok "Python dependencies installed/updated (headless OpenCV)"
+sudo -u "${APP_USER}" "${APP_DIR}/venv/bin/pip" install --quiet -r "${APP_DIR}/requirements.txt"
+ok "Python dependencies installed/updated"
 
 #############################################
 # Step 5: Configuration files
@@ -308,6 +307,13 @@ for SOURCE_DIR in "${FOLDERS[@]}"; do
     python classifier.py process "$SOURCE_DIR" --upload 2>&1 | while read -r line; do
         logger -t "$LOG_TAG" "$line"
     done
+done
+
+# Phase B runs every invocation: drain queued/retry extractions even when
+# no folder had new PDFs (the per-folder PDF_COUNT gate above only skips
+# Phase A classification)
+python classifier.py drain 2>&1 | while read -r line; do
+    logger -t "$LOG_TAG" "$line"
 done
 
 logger -t "$LOG_TAG" "Processing complete"

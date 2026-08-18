@@ -1506,6 +1506,23 @@ def process_and_move(
     return stats
 
 
+def run_drain(dry_run: bool = False) -> dict:
+    """Phase B only: drain the extraction/Odoo retry queue.
+
+    Runs unconditionally from the production timer (classifier.py drain) so
+    queued/retry rows are picked up even when no new PDFs arrived in any scan
+    folder. Folder layout is derived per row inside pipeline.drain.
+    """
+    import api_config
+    conn = state.connect(Path(__file__).parent / 'state.db')
+    try:
+        stats = pipeline.drain(conn, None, api_config.get_odoo(), dry_run=dry_run)
+    finally:
+        conn.close()
+    logger.info(f"Drain: {stats}")
+    return stats
+
+
 def generate_templates(invoices_dir: Path, output_dir: Path):
     """
     Generate reference templates from sample invoices.
@@ -1577,6 +1594,7 @@ Usage:
     python classifier.py process [folder] --dry-run    # Show what would happen without moving
     python classifier.py process [folder] --upload     # Process and upload to OCR APIs
     python classifier.py process [folder] --output-dir [dir]  # Custom output directory
+    python classifier.py drain [--dry-run]             # Phase B only: retry the extraction/Odoo queue
     python classifier.py generate-templates            # Generate reference templates
 
 Options:
@@ -1620,7 +1638,7 @@ Default folder: invoices_example/
     args = clean_args
 
     if args:
-        if args[0] in ('process', 'generate-templates', '-h', '--help'):
+        if args[0] in ('process', 'drain', 'generate-templates', '-h', '--help'):
             command = args[0]
             if len(args) > 1:
                 source_folder = Path(args[1])
@@ -1705,6 +1723,12 @@ Default folder: invoices_example/
             conn.close()
             logger.info(f"Drain: {drain_stats}")
             print(f"\nDrain: {drain_stats}")
+
+        elif command == 'drain':
+            # Phase B standalone: run every timer tick even when no folder
+            # had new PDFs, so queued/retry rows are never left waiting
+            stats = run_drain(dry_run=dry_run)
+            print(f"Drain: {stats}")
 
         elif command == '-h':
             print_usage()

@@ -42,6 +42,25 @@ def test_legacy_upload_not_called_by_default(conn, tmp_path, monkeypatch):
     assert called == []   # neutralized: legacy_apis_enabled() is False by default
 
 
+def test_run_drain_invokes_pipeline_drain(tmp_path, monkeypatch):
+    """C3: the standalone drain codepath (classifier.py drain) calls
+    pipeline.drain once with the configured Odoo settings."""
+    calls = []
+    monkeypatch.setattr(pipeline, 'drain',
+                        lambda conn, dirs, cfg, **kw: calls.append((dirs, cfg, kw))
+                        or {'sent': 0})
+    real_connect = state.connect
+    monkeypatch.setattr(state, 'connect',
+                        lambda p: real_connect(tmp_path / 'state.db'))
+    odoo = {'webhook_url': 'u', 'api_key': 'k', 'drive_remote': 'g:ScanSnap'}
+    monkeypatch.setattr(api_config, 'get_odoo', lambda *a, **k: odoo)
+    stats = clf.run_drain(dry_run=True)
+    assert stats == {'sent': 0}
+    assert len(calls) == 1
+    assert calls[0][1] is odoo
+    assert calls[0][2].get('dry_run') is True
+
+
 def test_legacy_upload_uses_real_supplier_key(conn, tmp_path, monkeypatch):
     src = tmp_path / 'ScanSnap'
     src.mkdir()
