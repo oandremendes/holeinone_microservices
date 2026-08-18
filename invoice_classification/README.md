@@ -1,6 +1,6 @@
 # Invoice Classification System
 
-Automated invoice classification for scanned documents from ScanSnap ix-1600. Identifies suppliers by analyzing PDF invoices using OCR and pattern matching, then renames, organizes, and uploads to OCR APIs for data extraction.
+Automated invoice processing for scanned documents from ScanSnap ix-1600. Identifies suppliers from the Portuguese fiscal QR code (with OCR fallback), renames and organizes the PDFs, extracts line-item data with Claude, validates it against the QR, and delivers validated invoices to Odoo plus JSON artifacts.
 
 ## Features
 
@@ -17,7 +17,9 @@ Automated invoice classification for scanned documents from ScanSnap ix-1600. Id
 
 ## Supported Suppliers
 
-### Invoices (→ Parseur)
+Known suppliers are seeded into the `state.db` supplier registry (NIF → key); QR codes with unknown NIFs are auto-registered on first sight. The OCR fallback additionally uses the keyword/template profiles in `classifier.py`.
+
+### Invoices
 
 | Supplier | NIF | Type |
 |----------|-----|------|
@@ -29,7 +31,7 @@ Automated invoice classification for scanned documents from ScanSnap ix-1600. Id
 | Novadis | 504350900 | Beer (Heineken/Guinness) |
 | Absolutly Vintage | 516001906 | Spirits |
 
-### Receipts (→ Docupipe)
+### Receipts
 
 | Category | Suppliers |
 |----------|-----------|
@@ -43,8 +45,6 @@ Automated invoice classification for scanned documents from ScanSnap ix-1600. Id
 | **Hardware** | Constamarina, Constantino, Papelnet, Gilda da Silva |
 | **Tolls/Parking** | Brisa, Alparques |
 | **Shopping** | Partyland, Oriental Shopping, Semino Shopping |
-
-\* With Docupipe workflow for automatic standardization
 
 ## VPS Deployment (One-Click)
 
@@ -145,7 +145,8 @@ sudo apt-get install tesseract-ocr tesseract-ocr-por poppler-utils
 
 # Configure API keys
 cp config.example.json config.json
-# Edit config.json with your Parseur and Docupipe API keys
+# Edit config.json with the Anthropic key and Odoo webhook settings
+# (Parseur/Docupipe keys only matter if legacy_apis.enabled is turned on)
 ```
 
 ## Usage
@@ -163,22 +164,22 @@ python classifier.py process --dry-run
 ```
 Shows what would happen without actually moving files.
 
-### Process and Move Files
+### Process (Phase A + Phase B)
 ```bash
 python classifier.py process
 ```
-Classifies, renames, and moves files:
-- **INTEGRATED/**: Known suppliers with API integration (has `mailbox_id` or `workflow_id`) → `YYYYMMDD_Supplier.pdf`
-- **MATCHED/**: Known suppliers without API integration → `YYYYMMDD_Supplier.pdf`
-- **REVIEW/**: Unknown suppliers → original filename
+Identifies (QR first, OCR fallback), renames, moves and enqueues files:
+- **INTEGRATED/**: Identified invoices → `YYYYMMDD_Supplier[_nc].pdf`, queued in `state.db` for extraction
+- **REVIEW/**: Unidentified invoices → original filename (a better rescan supersedes them)
+- **Duplicados/**: Duplicate scans (same md5 or same fiscal identity)
 
-### Process and Upload to OCR APIs
+The run ends with a Phase B drain: each queued invoice is extracted with Claude, validated against its QR (±2c, supplier quirks), filed into `INTEGRATED/YYYY/MM/`, written to `EXTRACTED/*.json`, and POSTed to Odoo when validation passes. Failures are retried on later runs (capped at 5 attempts).
+
+### Drain Only (Phase B)
 ```bash
-python classifier.py process --upload
+python classifier.py drain [--dry-run]
 ```
-Same as above, plus uploads INTEGRATED documents to the appropriate OCR API:
-- **Invoices** → Parseur (supplier-specific mailboxes via `mailbox_id`)
-- **Receipts** → Docupipe (workflow-based extraction via `workflow_id`)
+Retries the extraction/Odoo queue without classifying any new files. The production timer runs this on every tick, even when no new PDFs arrived.
 
 ### Generate Templates (Optional)
 ```bash
@@ -196,34 +197,44 @@ Creates reference template images from sample invoices for visual matching.
 
 ```
 invoice_classification/
-├── classifier.py          # Main classification logic
-├── api_config.py          # Supplier → API routing table
-├── parseur_client.py      # Parseur API client (invoices)
-├── docupipe_client.py     # Docupipe API client (receipts)
+├── classifier.py          # CLI + OCR fallback classification
+├── pipeline.py            # v2 pipeline: Phase A (identify/dedup/enqueue), Phase B (drain)
+├── qr.py                  # Fiscal QR decoding (PyMuPDF + zxing-cpp + WeChat CNN)
+├── state.py               # SQLite ledger/queue (state.db)
+├── claude_extract.py      # Claude line-item extraction (Pydantic schema)
+├── validation.py          # QR ↔ extraction validation gate (±2c, quirks)
+├── odoo_send.py           # Odoo webhook payload + Drive preview link
+├── artifacts.py           # Atomic EXTRACTED/*.json writes
+├── api_config.py          # config.json access (Anthropic/Odoo/legacy keys)
+├── parseur_client.py      # Legacy Parseur client (neutralized)
+├── docupipe_client.py     # Legacy Docupipe client (neutralized)
 ├── process_invoices.sh    # Auto-processing script for systemd
 ├── deploy.sh              # One-click VPS deployment script
 ├── config.json            # API keys (not in git)
 ├── config.example.json    # Config template
 ├── drivek.json            # Google Service Account key (not in git)
+├── state.db               # Pipeline ledger (not in git)
 ├── requirements.txt       # Python dependencies
 ├── venv/                  # Virtual environment
-├── invoices_example/      # Source invoices to process
-├── INTEGRATED/            # Output: classified with API integration
-├── MATCHED/               # Output: classified without API integration
-├── REVIEW/                # Output: unclassified invoices
 └── templates/             # Reference templates (optional)
 ```
 
+Each scan folder gets `INTEGRATED/` (filed into `YYYY/MM/` after validation), `REVIEW/` and a `Duplicados/` sibling; the ScanSnap root holds the shared `EXTRACTED/` artifact folder.
+
 ## How It Works
 
-1. **PDF to Image**: Converts first page of PDF to image (200 DPI)
-2. **OCR**: Extracts text using Tesseract with Portuguese language
-3. **NIF Matching**: Searches for supplier tax IDs (95% confidence)
-4. **Keyword Fallback**: If no NIF found, matches supplier keywords
-5. **Date Extraction**: Finds invoice date, avoiding due dates
-6. **File Operations**: Renames and moves to INTEGRATED/ (has API integration), MATCHED/ (no integration), or REVIEW/ (unknown)
+Phase A — per new PDF at the top level of a scan folder:
+1. **md5 dedup**: Exact rescans go to `Duplicados/` (a rescan of a failed/unidentified original supersedes it instead)
+2. **QR decode**: All fiscal QRs (Portaria 195/2020) are read; supplier by NIF, date from field F, `_nc` from D, identity dedup on (NIF, ATCUD)
+3. **OCR fallback**: When no QR decodes, the Tesseract pipeline (NIF substring, keywords, templates, date regexes) identifies the file
+4. **File + enqueue**: Identified files are renamed `YYYYMMDD_Supplier[_nc].pdf`, moved to `INTEGRATED/` and queued; unknown files go to `REVIEW/`
 
-## Classification Methods
+Phase B — every run, for each queued/retry row (attempts < 5):
+1. **Claude extraction**: Whole PDF, structured line items in integer cents
+2. **Validation gate**: total/IVA vs QR (±2c, supplier quirk table), invoice ref, date, and line-sum checks
+3. **Delivery**: Pass → file into `INTEGRATED/YYYY/MM/`, write `EXTRACTED/<name>.json`, POST to Odoo. Fail → JSON written, held as `needs_review`. Transient errors retry on later runs
+
+## OCR Fallback Classification Methods
 
 | Method | Confidence | Description |
 |--------|------------|-------------|
@@ -307,11 +318,8 @@ The classifier integrates with ScanSnap via Google Drive using rclone. ScanSnap 
 # Dry run (preview)
 python classifier.py process ~/GoogleDrive/ScanSnap --dry-run
 
-# Process and move files
+# Process, move and drain (extraction + Odoo)
 python classifier.py process ~/GoogleDrive/ScanSnap
-
-# Process with API upload (Parseur + Docupipe)
-python classifier.py process ~/GoogleDrive/ScanSnap --upload
 ```
 
 ### Alternative: Manual mount (without systemd)
@@ -354,15 +362,15 @@ The auto-processor monitors:
 - `~/GoogleDrive/ScanSnap/` - Main invoice folder
 - `~/GoogleDrive/ScanSnap/Receipts/` - Receipts subfolder
 
-Each folder has its own `MATCHED/` and `REVIEW/` subfolders for output.
+Each folder has its own `INTEGRATED/` and `REVIEW/` subfolders for output, and the extraction queue is drained on every run even when neither folder has new PDFs.
 
 ## Dependencies
 
-- **pdf2image**: PDF to image conversion
-- **pytesseract**: OCR engine wrapper
-- **opencv-python**: Image processing
+- **pymupdf** + **zxing-cpp**: PDF rendering and fiscal QR decoding
+- **opencv-contrib-python-headless**: Image processing + WeChat QR CNN fallback
+- **anthropic** + **pydantic**: Claude extraction with a typed schema
+- **pdf2image** / **pytesseract**: OCR fallback pipeline
 - **scikit-image**: Template matching (SSIM)
-- **watchdog**: Folder monitoring (for future automation)
 
 System requirements:
 - **poppler-utils**: PDF rendering (`pdftoppm`)
