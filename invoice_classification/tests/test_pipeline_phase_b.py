@@ -39,7 +39,7 @@ def env(conn, tmp_path, monkeypatch):
 def _extractor(result):
     class E:
         def model_dump(self): return result
-    return lambda pdf, supplier: (E(), json.dumps(result))
+    return lambda pdf, supplier: (E(), json.dumps(result), 'claude-opus-4-8')
 
 
 def test_drain_happy_path_files_sends_writes(env):
@@ -56,6 +56,7 @@ def test_drain_happy_path_files_sends_writes(env):
     art = json.loads((dirs['extracted'] / '20260315_Novadis.json').read_text())
     assert art['validation']['status'] == 'ok'
     assert art['odoo']['status'] == 'sent'
+    assert art['model'] == 'claude-opus-4-8'  # served model, not the constant
     assert posts[0]['document_url'] == 'https://drive.google.com/file/d/DRIVEID/preview'
     assert posts[0]['md5'] == row['md5']
 

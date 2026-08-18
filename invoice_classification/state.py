@@ -121,7 +121,7 @@ def delete_qrs(conn, file_id):
 def pending(conn, cap=5):
     return conn.execute(
         "SELECT f.*, COALESCE(e.attempts, 0) AS attempts,"
-        " e.result_json AS result_json FROM files f"
+        " e.result_json AS result_json, e.model AS model FROM files f"
         " LEFT JOIN extractions e ON e.file_id = f.id"
         " WHERE f.status IN ('queued','retry') AND COALESCE(e.attempts, 0) < ?"
         " ORDER BY f.id", (cap,)).fetchall()

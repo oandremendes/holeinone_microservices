@@ -15,8 +15,9 @@ class FakeBlock:
 
 
 class FakeResponse:
-    def __init__(self, text, stop_reason='end_turn'):
+    def __init__(self, text, stop_reason='end_turn', model='claude-opus-5'):
         self.stop_reason = stop_reason
+        self.model = model
         self.content = [FakeBlock(text)]
 
 
@@ -24,6 +25,7 @@ class FakeClient:
     def __init__(self, responses):
         self._responses = list(responses)
         self.calls = []
+        self.beta = self
         self.messages = self
     def create(self, **kw):
         self.calls.append(kw)
@@ -51,16 +53,27 @@ def pdf(tmp_path):
 
 def test_extract_ok(pdf):
     fake = FakeClient([FakeResponse(f'aqui está:\n{GOOD}\nfim')])
-    result, raw = ce.extract(pdf, supplier='novadis', client=fake)
+    result, raw, served = ce.extract(pdf, supplier='novadis', client=fake)
     assert result.total_cents == 44693
     assert result.lines[0].description == 'Barril'
+    assert served == 'claude-opus-5'
     assert 'Notas específicas' in fake.calls[0]['messages'][0]['content'][1]['text']
     assert fake.calls[0]['model'] == 'claude-opus-5'
+    # refusal fallback: rescued server-side by Opus 4.8 on a policy decline
+    assert fake.calls[0]['betas'] == ['server-side-fallback-2026-07-01']
+    assert fake.calls[0]['fallbacks'] == 'default'
+
+
+def test_extract_reports_fallback_model(pdf):
+    fake = FakeClient([FakeResponse(GOOD, model='claude-opus-4-8')])
+    result, _, served = ce.extract(pdf, client=fake)
+    assert result.total_cents == 44693
+    assert served == 'claude-opus-4-8'
 
 
 def test_extract_retries_bad_json_once(pdf):
     fake = FakeClient([FakeResponse('not json at all'), FakeResponse(GOOD)])
-    result, _ = ce.extract(pdf, client=fake)
+    result, _, _ = ce.extract(pdf, client=fake)
     assert result.total_cents == 44693
     assert len(fake.calls) == 2
     # the re-ask must show the model its own invalid response

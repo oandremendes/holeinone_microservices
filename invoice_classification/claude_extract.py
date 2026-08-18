@@ -126,10 +126,14 @@ class PermanentExtractionError(RuntimeError):
 
 
 def extract(pdf_path, supplier=None, api_key=None, client=None):
-    """PDF -> (Extraction, raw_json_str). `client` injectable for tests.
+    """PDF -> (Extraction, raw_json_str, served_model). `client` injectable.
 
-    Invalid-JSON responses get one re-ask; still invalid -> RuntimeError
-    (transient, retried by the queue). refusal -> PermanentExtractionError.
+    Pede fallback server-side ("default"): se os classificadores do Opus 5
+    recusarem, a API reexecuta o mesmo pedido no Opus 4.8 dentro da mesma
+    chamada; served_model identifica o modelo que respondeu. Um refusal na
+    resposta final significa que toda a cadeia recusou ->
+    PermanentExtractionError. Respostas com JSON inválido têm uma repetição;
+    ainda inválido -> RuntimeError (transiente, repetido pela fila).
     """
     import pydantic
     if client is None:
@@ -139,14 +143,16 @@ def extract(pdf_path, supplier=None, api_key=None, client=None):
     messages = [{'role': 'user', 'content': content}]
     last_err = None
     for _ in range(2):
-        response = client.messages.create(model=MODEL, max_tokens=16000,
-                                          messages=messages)
+        response = client.beta.messages.create(
+            model=MODEL, max_tokens=16000, messages=messages,
+            betas=['server-side-fallback-2026-07-01'], fallbacks='default')
         if response.stop_reason == 'refusal':
             raise PermanentExtractionError('Claude recusou (stop_reason=refusal)')
+        served_model = getattr(response, 'model', None) or MODEL
         text = next(b.text for b in response.content if b.type == 'text')
         try:
             result = Extraction.model_validate(_parse_json_response(text))
-            return result, result.model_dump_json()
+            return result, result.model_dump_json(), served_model
         except (ValueError, pydantic.ValidationError) as e:
             last_err = e
             # include the assistant turn so the model sees its own invalid

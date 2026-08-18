@@ -291,9 +291,11 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
             # previous attempt -- reuse it instead of re-running Claude
             result = claude_extract.Extraction.model_validate_json(row['result_json'])
             raw_json = row['result_json']
+            served_model = row['model'] or claude_extract.MODEL
         else:
             try:
-                result, raw_json = extractor(row['current_path'], row['supplier_key'])
+                result, raw_json, served_model = extractor(
+                    row['current_path'], row['supplier_key'])
             except claude_extract.PermanentExtractionError as e:
                 state.record_error(conn, fid, str(e), cap=cap, permanent=True)
                 stats['failed'] += 1
@@ -309,7 +311,7 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
         extraction = result.model_dump()
         qr_fields = _primary_qr(conn, fid)
         verdict = validation.validate(extraction, qr_fields, row['supplier_key'])
-        state.save_extraction(conn, fid, claude_extract.MODEL, raw_json,
+        state.save_extraction(conn, fid, served_model, raw_json,
                               json.dumps(verdict))
         row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
         basename = Path(row['current_path']).stem
@@ -319,7 +321,7 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
             stats['needs_review'] += 1
             art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
                                            {'sent_at': None, 'status': 'held'},
-                                           claude_extract.MODEL, attempts)
+                                           served_model, attempts)
             artifacts.write_json(row_dirs['extracted'], basename, art)
             continue
 
@@ -353,7 +355,7 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
             stats['retried' if new_status == 'retry' else 'failed'] += 1
             art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
                                            {'sent_at': None, 'status': None},
-                                           claude_extract.MODEL, attempts)
+                                           served_model, attempts)
             artifacts.write_json(row_dirs['extracted'], basename, art)
             continue
 
@@ -363,7 +365,7 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
         art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
                                        {'sent_at': sent_row['odoo_sent_at'],
                                         'status': 'sent'},
-                                       claude_extract.MODEL, attempts)
+                                       served_model, attempts)
         artifacts.write_json(row_dirs['extracted'], basename, art)
         stats['sent'] += 1
     return stats
