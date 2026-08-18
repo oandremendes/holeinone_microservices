@@ -15,9 +15,6 @@
   "odoo": {
     "webhook_url": "https://YOUR_ODOO_HOST",
     "api_key": "YOUR_ODOO_WEBHOOK_KEY",
-    "drive_remote": "gdrive:ScanSnap",
-    "drive_lsf_flags": [
-      "--drive-shared-with-me"
-    ]
+    "drive_remote": "gdrive:ScanSnap"
   }
 }

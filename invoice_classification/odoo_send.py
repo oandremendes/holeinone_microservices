@@ -79,24 +79,26 @@ def build_payload(file_row, extraction, document_url=None):
     return payload
 
 
-def resolve_drive_id(remote_path, run=None, flags=None):
+def resolve_drive_id(remote_path, run=None):
     """ID Drive de um ficheiro via `rclone lsf --format i`; None em falha.
 
-    `flags`: argumentos extra do rclone — p.ex. ['--drive-shared-with-me']
-    quando a pasta pertence a outra conta e está apenas partilhada com esta
-    (caso do VPS; sem a flag o lsf procura no Drive próprio e falha).
+    Tenta primeiro com --drive-shared-with-me (a pasta ScanSnap pertence a
+    outra conta e está apenas partilhada com a do serviço; sem a flag o lsf
+    procura no Drive próprio e não encontra nada). Sem resultado, repete sem
+    a flag, para configurações em que o remote é dono dos ficheiros.
     """
     if run is None:
         import subprocess
         run = subprocess.run
-    try:
-        proc = run(['rclone', 'lsf', '--format', 'i', *(flags or []), remote_path],
-                   capture_output=True, text=True, timeout=30)
-    except Exception:
-        return None
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return None
-    return proc.stdout.strip().splitlines()[0]
+    for flags in (['--drive-shared-with-me'], []):
+        try:
+            proc = run(['rclone', 'lsf', '--format', 'i', *flags, remote_path],
+                       capture_output=True, text=True, timeout=30)
+        except Exception:
+            return None
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip().splitlines()[0]
+    return None
 
 
 def drive_preview_url(drive_id):

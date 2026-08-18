@@ -44,25 +44,26 @@ def test_send_ok_and_error():
                        poster=lambda *a: {'error': {'message': 'nope'}})
 
 
-def test_resolve_drive_id_passes_flags():
-    seen = {}
+def test_resolve_drive_id_tries_shared_with_me_first():
+    calls = []
     def run(cmd, **kw):
-        seen['cmd'] = cmd
+        calls.append(cmd)
         class P: returncode, stdout = 0, 'FILEID123\n'
         return P()
-    fid = odoo_send.resolve_drive_id('gdrive:ScanSnap/x.pdf', run=run,
-                                     flags=['--drive-shared-with-me'])
-    assert fid == 'FILEID123'
-    assert seen['cmd'][:2] == ['rclone', 'lsf']
-    assert '--drive-shared-with-me' in seen['cmd']
-    assert seen['cmd'][-1] == 'gdrive:ScanSnap/x.pdf'
+    assert odoo_send.resolve_drive_id('gdrive:ScanSnap/x.pdf', run=run) == 'FILEID123'
+    assert len(calls) == 1
+    assert '--drive-shared-with-me' in calls[0]
+    assert calls[0][-1] == 'gdrive:ScanSnap/x.pdf'
 
 
-def test_resolve_drive_id_no_flags_backcompat():
-    seen = {}
+def test_resolve_drive_id_falls_back_to_owned_drive():
+    calls = []
     def run(cmd, **kw):
-        seen['cmd'] = cmd
-        class P: returncode, stdout = 0, 'ID\n'
+        calls.append(cmd)
+        class P: pass
+        P.returncode = 0
+        P.stdout = '' if '--drive-shared-with-me' in cmd else 'OWNED42\n'
         return P()
-    assert odoo_send.resolve_drive_id('gdrive:ScanSnap/x.pdf', run=run) == 'ID'
-    assert '--drive-shared-with-me' not in seen['cmd']
+    assert odoo_send.resolve_drive_id('gdrive:ScanSnap/x.pdf', run=run) == 'OWNED42'
+    assert len(calls) == 2
+    assert '--drive-shared-with-me' not in calls[1]
