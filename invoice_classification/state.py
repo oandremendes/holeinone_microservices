@@ -97,6 +97,27 @@ def supersede(conn, old_id, new_id):
     conn.commit()
 
 
+def reset_for_retry(conn, file_id, *, current_path, status='queued', nif=None,
+                    atcud=None, doc_ref=None, supplier_key=None, doc_date=None,
+                    doc_type=None, id_source='none'):
+    """Reuse an existing row for an exact-bytes rescan (files.md5 is UNIQUE,
+    so no new row can be inserted): repoint the path, refresh identification,
+    reset the queue status and clear extraction attempts/last_error."""
+    conn.execute("UPDATE files SET current_path=?, status=?, nif=?, atcud=?,"
+                 " doc_ref=?, supplier_key=?, doc_date=?, doc_type=?,"
+                 " id_source=? WHERE id=?",
+                 (str(current_path), status, nif, atcud, doc_ref, supplier_key,
+                  doc_date, doc_type, id_source, file_id))
+    conn.execute("UPDATE extractions SET attempts=0, last_error=NULL"
+                 " WHERE file_id=?", (file_id,))
+    conn.commit()
+
+
+def delete_qrs(conn, file_id):
+    conn.execute("DELETE FROM qr_codes WHERE file_id=?", (file_id,))
+    conn.commit()
+
+
 def pending(conn, cap=5):
     return conn.execute(
         "SELECT f.*, COALESCE(e.attempts, 0) AS attempts FROM files f"

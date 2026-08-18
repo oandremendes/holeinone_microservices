@@ -35,7 +35,14 @@ class Identified:
 
 
 def identify(pdf_path, conn, ocr_fallback, dry_run=False):
-    hits = qr_decode(pdf_path)
+    try:
+        hits = qr_decode(pdf_path)
+    except Exception as e:
+        # corrupt/unreadable PDF: fall through to the OCR fallback (which
+        # itself returns 'unknown' on unreadable input) so the file lands in
+        # REVIEW with a files row instead of erroring on every run
+        logger.warning('QR decode failed for %s: %s', pdf_path, e)
+        hits = []
     if hits:
         f = hits[0].fields          # primary = first fiscal QR
         nif = f.get('A')
@@ -161,6 +168,27 @@ def handle_new_file(pdf_path, conn, dirs, ocr_fallback, dry_run=False):
         return {'action': action, 'new_name': dest.name, 'file_id': None}
 
     shutil.move(str(pdf_path), str(dest))
+    if verdict == 'supersede' and original['md5'] == md5:
+        # exact same bytes rescanned over a bad original: files.md5 is UNIQUE,
+        # so there is no new row to insert -- reuse the original row (its old
+        # file is already in Duplicados) and let it re-enter the queue
+        fid = original['id']
+        state.reset_for_retry(conn, fid, current_path=str(dest), status=status,
+                              nif=ident.nif, atcud=ident.atcud,
+                              doc_ref=ident.doc_ref,
+                              supplier_key=ident.supplier_key or None,
+                              doc_date=ident.doc_date, doc_type=ident.doc_type,
+                              id_source=ident.id_source)
+        stored = [r['raw_payload'] for r in conn.execute(
+            "SELECT raw_payload FROM qr_codes WHERE file_id=? ORDER BY id",
+            (fid,)).fetchall()]
+        if [h.raw for h in ident.qr_hits] != stored:
+            state.delete_qrs(conn, fid)
+            for i, hit in enumerate(ident.qr_hits):
+                state.add_qr(conn, fid, hit.page, hit.raw, hit.fields,
+                             is_primary=(i == 0))
+        return {'action': action, 'new_name': dest.name, 'file_id': fid}
+
     fid = state.insert_file(conn, md5=md5, original_name=pdf_path.name,
                             current_path=str(dest), nif=ident.nif,
                             atcud=ident.atcud, doc_ref=ident.doc_ref,
