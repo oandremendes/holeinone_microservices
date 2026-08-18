@@ -63,6 +63,11 @@ def test_extract_retries_bad_json_once(pdf):
     result, _ = ce.extract(pdf, client=fake)
     assert result.total_cents == 44693
     assert len(fake.calls) == 2
+    # the re-ask must show the model its own invalid response
+    retry_msgs = fake.calls[1]['messages']
+    assert [m['role'] for m in retry_msgs] == ['user', 'assistant', 'user']
+    assert retry_msgs[1]['content'] == 'not json at all'
+    assert 'inválida' in retry_msgs[2]['content']
 
 
 def test_extract_gives_up_after_two_bad(pdf):

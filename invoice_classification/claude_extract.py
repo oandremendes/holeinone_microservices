@@ -149,7 +149,10 @@ def extract(pdf_path, supplier=None, api_key=None, client=None):
             return result, result.model_dump_json()
         except (ValueError, pydantic.ValidationError) as e:
             last_err = e
+            # include the assistant turn so the model sees its own invalid
+            # response before the correction request
             messages = [{'role': 'user', 'content': content},
+                        {'role': 'assistant', 'content': text},
                         {'role': 'user', 'content':
                          f'A resposta anterior era inválida ({e}). Responde de '
                          f'novo, apenas com o objeto JSON válido.'}]
