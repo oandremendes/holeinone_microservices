@@ -28,7 +28,12 @@ def validate(extraction, qr_fields, supplier_key):
     checks, notes = {}, []
     lines = extraction.get('lines') or []
     line_sum = sum(ln.get('line_total_cents') or 0 for ln in lines)
-    checks['soma_linhas'] = line_sum == (extraction.get('total_cents') or 0)
+    e_total = extraction.get('total_cents')
+    e_doc = extraction.get('total_document_cents')
+    # vasilhame/tara invoices: the lines include tara at 0%, so they sum to
+    # the payable (document) total, not the merchandise total
+    has_doc_total = e_doc is not None and e_doc != e_total
+    checks['soma_linhas'] = line_sum == ((e_doc if has_doc_total else e_total) or 0)
 
     if not qr_fields:
         notes.append('sem QR fiscal — validação impossível, retido')
@@ -37,9 +42,20 @@ def validate(extraction, qr_fields, supplier_key):
     base_key = (supplier_key or '').removesuffix('_nc')
     q_total = qr_cents(qr_fields.get('O'))
     q_iva = qr_cents(qr_fields.get('N'))
-    e_total, e_iva = extraction.get('total_cents'), extraction.get('iva_cents')
+    e_iva = extraction.get('iva_cents')
 
-    checks['total_vs_qr'] = _close(e_total, q_total)
+    if has_doc_total:
+        # QR O may carry either the merchandise or the payable total
+        if _close(e_total, q_total):
+            checks['total_vs_qr'] = True
+            notes.append('total_vs_qr: total_cents corresponde ao QR O')
+        elif _close(e_doc, q_total):
+            checks['total_vs_qr'] = True
+            notes.append('total_vs_qr: total_document_cents corresponde ao QR O')
+        else:
+            checks['total_vs_qr'] = False
+    else:
+        checks['total_vs_qr'] = _close(e_total, q_total)
 
     quirk = IVA_QUIRKS.get(base_key)
     if _close(e_iva, q_iva):
@@ -51,6 +67,10 @@ def validate(extraction, qr_fields, supplier_key):
           and _close(e_total - e_iva, q_iva)):
         checks['iva_vs_qr'] = True
         notes.append('quirk base_in_n aplicado (QR N contém a base)')
+    elif e_iva in (0, None) and (qr_cents(qr_fields.get('M')) or 0) > 0:
+        # documentos de imposto do selo (ex.: BCP): N > 0 com IVA real 0
+        checks['iva_vs_qr'] = True
+        notes.append('quirk stamp_duty aplicado (QR M > 0, IVA 0)')
     else:
         checks['iva_vs_qr'] = False
 

@@ -45,6 +45,37 @@ def test_quirk_base_in_n():
     assert validate(EXT, q, 'orientalshopping')['checks']['iva_vs_qr']
 
 
+def test_quirk_stamp_duty():
+    # BCP-like stamp-duty document: QR M (imposto do selo) > 0, N > 0,
+    # but the document genuinely carries no IVA -- supplier-independent
+    q = dict(QR, M='17.60', N='17.60')
+    v = validate(dict(EXT, iva_cents=0), q, 'bcp')
+    assert v['checks']['iva_vs_qr'] and 'stamp_duty' in ' '.join(v['notes'])
+    assert validate(dict(EXT, iva_cents=None), q, None)['checks']['iva_vs_qr']
+    # without M, IVA 0 vs N>0 still fails
+    assert not validate(dict(EXT, iva_cents=0), QR, None)['checks']['iva_vs_qr']
+
+
+def test_vasilhame_total_document():
+    # Novadis-like: vasilhame/tara lines at 0% raise the payable total above
+    # the merchandise total; QR O carries the payable (document) total
+    q = dict(QR, O='451.93')
+    ext = dict(EXT, total_document_cents=45193,
+               lines=[{'line_total_cents': 44693}, {'line_total_cents': 500}])
+    v = validate(ext, q, 'novadis')
+    assert v['status'] == 'ok'
+    assert v['checks']['total_vs_qr'] and v['checks']['soma_linhas']
+    assert 'total_document_cents' in ' '.join(v['notes'])
+    # when QR O carries the merchandise total instead, total_cents matches
+    v2 = validate(ext, QR, 'novadis')
+    assert v2['checks']['total_vs_qr']
+    assert 'total_cents' in ' '.join(v2['notes'])
+    # neither total near QR O -> fail
+    v3 = validate(dict(ext, total_cents=99999, total_document_cents=88888),
+                  q, 'novadis')
+    assert not v3['checks']['total_vs_qr']
+
+
 def test_soma_linhas():
     ext = dict(EXT, lines=[{'line_total_cents': 100}])
     v = validate(ext, QR, None)
