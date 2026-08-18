@@ -2,6 +2,7 @@
 import hashlib
 import json
 import logging
+import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -211,6 +212,42 @@ def file_into_month(path, integrated_dir, doc_date):
     return dest
 
 
+def dirs_for_source(source_dir):
+    """Build the v2 pipeline dirs layout for a given ScanSnap source folder."""
+    source_dir = Path(source_dir)
+    if source_dir.name == 'ScanSnap':
+        scansnap_root = source_dir
+        duplicados = source_dir.parent / 'Duplicados'
+    else:
+        # e.g. .../ScanSnap/Receipts -> ScanSnap root is the parent
+        scansnap_root = source_dir.parent
+        duplicados = source_dir / 'Duplicados'
+    return {
+        'integrated': source_dir / 'INTEGRATED',
+        'review': source_dir / 'REVIEW',
+        'duplicados': duplicados,
+        'extracted': scansnap_root / 'EXTRACTED',
+    }
+
+
+def _in_month_dir(path):
+    """True when path is already filed under an INTEGRATED YYYY/MM subdir."""
+    p = Path(path)
+    return bool(re.fullmatch(r'\d{2}', p.parent.name)
+                and re.fullmatch(r'\d{4}', p.parent.parent.name))
+
+
+def _dirs_for_row(current_path):
+    """Derive the folder layout for one queued row from its own path, so a
+    drain started from any folder files each row into its own source root
+    (state.pending is global). None when the layout can't be derived."""
+    p = Path(current_path)
+    integrated = p.parent.parent.parent if _in_month_dir(p) else p.parent
+    if integrated.name != 'INTEGRATED':
+        return None
+    return dirs_for_source(integrated.parent)
+
+
 def _primary_qr(conn, file_id):
     row = conn.execute("SELECT parsed_json FROM qr_codes WHERE file_id=? AND"
                        " is_primary=1", (file_id,)).fetchone()
@@ -238,21 +275,35 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
     for row in state.pending(conn, cap=cap):
         fid = row['id']
         attempts = row['attempts'] + 1
+        # dirs are derived per row from its own path: state.pending is global,
+        # so a drain started from one folder may pick up rows queued under
+        # another source root (the caller's dirs are only a fallback)
+        row_dirs = _dirs_for_row(row['current_path']) or dirs
+        if row_dirs is None:
+            logger.warning("cannot derive folders for %s; skipping",
+                           row['current_path'])
+            continue
         if dry_run:
             logger.info(f"[DRY RUN] would extract {row['current_path']}")
             continue
-        try:
-            result, raw_json = extractor(row['current_path'], row['supplier_key'])
-        except claude_extract.PermanentExtractionError as e:
-            state.record_error(conn, fid, str(e), cap=cap, permanent=True)
-            stats['failed'] += 1
-            continue
-        except Exception as e:
-            state.record_error(conn, fid, str(e), cap=cap)
-            new_status = conn.execute("SELECT status FROM files WHERE id=?",
-                                      (fid,)).fetchone()[0]
-            stats['retried' if new_status == 'retry' else 'failed'] += 1
-            continue
+        if row['result_json']:
+            # odoo/filing retry: the extraction already succeeded on a
+            # previous attempt -- reuse it instead of re-running Claude
+            result = claude_extract.Extraction.model_validate_json(row['result_json'])
+            raw_json = row['result_json']
+        else:
+            try:
+                result, raw_json = extractor(row['current_path'], row['supplier_key'])
+            except claude_extract.PermanentExtractionError as e:
+                state.record_error(conn, fid, str(e), cap=cap, permanent=True)
+                stats['failed'] += 1
+                continue
+            except Exception as e:
+                state.record_error(conn, fid, str(e), cap=cap)
+                new_status = conn.execute("SELECT status FROM files WHERE id=?",
+                                          (fid,)).fetchone()[0]
+                stats['retried' if new_status == 'retry' else 'failed'] += 1
+                continue
 
         stats['extracted'] += 1
         extraction = result.model_dump()
@@ -269,16 +320,24 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
             art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
                                            {'sent_at': None, 'status': 'held'},
                                            claude_extract.MODEL, attempts)
-            artifacts.write_json(dirs['extracted'], basename, art)
+            artifacts.write_json(row_dirs['extracted'], basename, art)
             continue
 
         # validated: file into YYYY/MM before resolving the Drive link
         try:
             doc_date = row['doc_date'] or extraction.get('date')
-            new_path = file_into_month(row['current_path'], dirs['integrated'],
-                                       doc_date)
-            state.update_path(conn, fid, new_path)
-            row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+            if _in_month_dir(row['current_path']):
+                # already filed by a previous attempt -- no _N rename cascade
+                new_path = Path(row['current_path'])
+            else:
+                new_path = file_into_month(row['current_path'],
+                                           row_dirs['integrated'], doc_date)
+                state.update_path(conn, fid, new_path)
+                row = conn.execute("SELECT * FROM files WHERE id=?",
+                                   (fid,)).fetchone()
+            # the filed name may carry a _N suffix from _unique_dest, so the
+            # artifact basename must follow the POST-filing path
+            basename = new_path.stem
             marker = '/ScanSnap/'
             rel = (str(new_path).split(marker, 1)[1] if marker in str(new_path)
                    else Path(new_path).name)
@@ -289,11 +348,13 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
                                          odoo_cfg['api_key'], poster=poster)
         except Exception as e:
             state.record_error(conn, fid, f'odoo/filing: {e}', cap=cap)
-            stats['retried'] += 1
+            new_status = conn.execute("SELECT status FROM files WHERE id=?",
+                                      (fid,)).fetchone()[0]
+            stats['retried' if new_status == 'retry' else 'failed'] += 1
             art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
                                            {'sent_at': None, 'status': None},
                                            claude_extract.MODEL, attempts)
-            artifacts.write_json(dirs['extracted'], basename, art)
+            artifacts.write_json(row_dirs['extracted'], basename, art)
             continue
 
         state.mark_sent(conn, fid, json.dumps(odoo_result))
@@ -303,6 +364,6 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
                                        {'sent_at': sent_row['odoo_sent_at'],
                                         'status': 'sent'},
                                        claude_extract.MODEL, attempts)
-        artifacts.write_json(dirs['extracted'], basename, art)
+        artifacts.write_json(row_dirs['extracted'], basename, art)
         stats['sent'] += 1
     return stats

@@ -22,14 +22,15 @@ ODOO = {'webhook_url': 'https://odoo.example', 'api_key': 'K',
 
 @pytest.fixture
 def env(conn, tmp_path, monkeypatch):
-    dirs = {'integrated': tmp_path / 'INTEGRATED', 'review': tmp_path / 'REVIEW',
-            'duplicados': tmp_path / 'Duplicados', 'extracted': tmp_path / 'EXTRACTED'}
+    source = tmp_path / 'ScanSnap'
+    source.mkdir()
+    dirs = pipeline.dirs_for_source(source)
     for p in dirs.values():
-        p.mkdir()
+        p.mkdir(parents=True, exist_ok=True)
     state.seed_suppliers(conn, {'novadis': ('504350900', 'Novadis')})
     monkeypatch.setattr(pipeline, 'qr_decode',
                         lambda p: [QrHit(1, PAYLOAD, parse_payload(PAYLOAD))])
-    src = tmp_path / 'scan.pdf'
+    src = source / 'scan.pdf'
     src.write_bytes(b'%PDF x')
     out = pipeline.handle_new_file(src, conn, dirs, None)
     return conn, dirs, out['file_id']
@@ -106,3 +107,103 @@ def test_drain_odoo_error_is_transient(env):
                    poster=bad_poster, resolver=lambda r: None)
     row = conn.execute("SELECT status FROM files WHERE id=?", (fid,)).fetchone()
     assert row['status'] == 'retry'   # extraction succeeded but send failed -> retry later
+
+
+def test_drain_odoo_retry_reuses_extraction_and_filing(env):
+    """I2: an odoo/filing retry must not re-run Claude nor re-file the PDF."""
+    conn, dirs, fid = env
+    calls = []
+    def extractor(pdf, sup):
+        calls.append(pdf)
+        return _extractor(GOOD_EXT)(pdf, sup)
+    posts = {'n': 0}
+    def poster(u, b, h):
+        posts['n'] += 1
+        if posts['n'] == 1:
+            raise OSError('network')
+        return {'result': {'id': 9}}
+    pipeline.drain(conn, dirs, ODOO, extractor=extractor, poster=poster,
+                   resolver=lambda r: 'D')
+    row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+    assert row['status'] == 'retry'
+    filed = row['current_path']
+    assert '/INTEGRATED/2026/03/' in filed
+    stats = pipeline.drain(conn, dirs, ODOO, extractor=extractor, poster=poster,
+                           resolver=lambda r: 'D')
+    assert stats['sent'] == 1
+    assert len(calls) == 1                       # extractor ran only once
+    row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+    assert row['current_path'] == filed          # no _1 rename cascade
+    assert row['status'] == 'sent'
+
+
+def test_drain_derives_dirs_per_row(conn, tmp_path, monkeypatch):
+    """C2: rows queued under different source roots are filed into their own
+    roots, regardless of which folder the drain invocation targeted."""
+    root1 = tmp_path / 'ScanSnap'
+    root2 = root1 / 'Receipts'
+    d1 = pipeline.dirs_for_source(root1)
+    d2 = pipeline.dirs_for_source(root2)
+    for d in (*d1.values(), *d2.values()):
+        d.mkdir(parents=True, exist_ok=True)
+    state.seed_suppliers(conn, {'novadis': ('504350900', 'Novadis'),
+                                'teofilo': ('500099871', 'Teofilo')})
+    monkeypatch.setattr(pipeline, 'qr_decode',
+                        lambda p: [QrHit(1, PAYLOAD, parse_payload(PAYLOAD))])
+    s1 = root1 / 'a.pdf'
+    s1.write_bytes(b'%PDF one')
+    pipeline.handle_new_file(s1, conn, d1, None)
+    p2 = PAYLOAD.replace('504350900', '500099871')
+    monkeypatch.setattr(pipeline, 'qr_decode',
+                        lambda p: [QrHit(1, p2, parse_payload(p2))])
+    s2 = root2 / 'b.pdf'
+    s2.write_bytes(b'%PDF two')
+    pipeline.handle_new_file(s2, conn, d2, None)
+    def extractor(pdf, sup):
+        return _extractor(GOOD_EXT)(pdf, sup)
+    # drain invoked with root2's dirs -- each row still files into its own root
+    stats = pipeline.drain(conn, d2, ODOO, extractor=extractor,
+                           poster=lambda u, b, h: {'result': {'id': 1}},
+                           resolver=lambda r: 'D')
+    assert stats['sent'] == 2
+    assert (root1 / 'INTEGRATED' / '2026' / '03' / '20260315_Novadis.pdf').exists()
+    assert (root2 / 'INTEGRATED' / '2026' / '03' / '20260315_Teofilo.pdf').exists()
+    # EXTRACTED always derives from the ScanSnap root
+    assert (d1['extracted'] / '20260315_Novadis.json').exists()
+    assert (d1['extracted'] / '20260315_Teofilo.json').exists()
+
+
+def test_artifact_name_follows_filed_pdf_name(conn, tmp_path, monkeypatch):
+    """I1: two invoices with the same flat stem keep distinct EXTRACTED
+    artifacts matching their final (post-filing, _N-suffixed) PDF names."""
+    source = tmp_path / 'ScanSnap'
+    source.mkdir()
+    dirs = pipeline.dirs_for_source(source)
+    for p in dirs.values():
+        p.mkdir(parents=True, exist_ok=True)
+    state.seed_suppliers(conn, {'novadis': ('504350900', 'Novadis')})
+    ok_poster = lambda u, b, h: {'result': {'id': 1}}
+    monkeypatch.setattr(pipeline, 'qr_decode',
+                        lambda p: [QrHit(1, PAYLOAD, parse_payload(PAYLOAD))])
+    s1 = source / 's1.pdf'
+    s1.write_bytes(b'%PDF one')
+    pipeline.handle_new_file(s1, conn, dirs, None)
+    pipeline.drain(conn, dirs, ODOO, extractor=_extractor(GOOD_EXT),
+                   poster=ok_poster, resolver=lambda r: 'D1')
+    # second document, same supplier+date -> same flat stem after Phase A
+    p2 = PAYLOAD.replace('011485', '022222')
+    ext2 = dict(GOOD_EXT, invoice_ref='FT FT100/022222')
+    monkeypatch.setattr(pipeline, 'qr_decode',
+                        lambda p: [QrHit(1, p2, parse_payload(p2))])
+    s2 = source / 's2.pdf'
+    s2.write_bytes(b'%PDF two')
+    pipeline.handle_new_file(s2, conn, dirs, None)
+    pipeline.drain(conn, dirs, ODOO, extractor=_extractor(ext2),
+                   poster=ok_poster, resolver=lambda r: 'D2')
+    month = dirs['integrated'] / '2026' / '03'
+    assert (month / '20260315_Novadis.pdf').exists()
+    assert (month / '20260315_Novadis_1.pdf').exists()
+    a1 = json.loads((dirs['extracted'] / '20260315_Novadis.json').read_text())
+    a2 = json.loads((dirs['extracted'] / '20260315_Novadis_1.json').read_text())
+    assert a1['pdf'].endswith('2026/03/20260315_Novadis.pdf')
+    assert a2['pdf'].endswith('2026/03/20260315_Novadis_1.pdf')

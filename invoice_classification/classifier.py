@@ -1395,20 +1395,7 @@ def _ocr_classify(classifier, pdf_path):
 
 def _dirs_for_source(source_dir: Path) -> dict:
     """Build the v2 pipeline dirs layout for a given ScanSnap source folder."""
-    source_dir = Path(source_dir)
-    if source_dir.name == 'ScanSnap':
-        scansnap_root = source_dir
-        duplicados = source_dir.parent / 'Duplicados'
-    else:
-        # e.g. .../ScanSnap/Receipts -> ScanSnap root is the parent
-        scansnap_root = source_dir.parent
-        duplicados = source_dir / 'Duplicados'
-    return {
-        'integrated': source_dir / 'INTEGRATED',
-        'review': source_dir / 'REVIEW',
-        'duplicados': duplicados,
-        'extracted': scansnap_root / 'EXTRACTED',
-    }
+    return pipeline.dirs_for_source(source_dir)
 
 
 def process_and_move(
