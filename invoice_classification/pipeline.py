@@ -14,9 +14,11 @@ import state
 logger = logging.getLogger('invoice_classifier')
 
 # Tipos de documento fiscais (QR campo D) que NÃO são faturas e nunca devem
-# ir ao Odoo: são parqueados em QA/Nao Fatura logo na identificação, sem
-# gastar uma extração. Extensível (ex.: 'GR'/'GT' guias, se se quiser).
-NON_INVOICE_DOC_TYPES = {'RG'}   # RG = recibo de pagamento
+# ir ao Odoo: são parqueados em <ano>/Outros Documentos fiscais logo na
+# identificação, sem gastar uma extração. Extensível.
+NON_INVOICE_DOC_TYPES = {'RG',   # recibo de pagamento
+                         'GR',   # guia de remessa
+                         'GT'}   # guia de transporte
 
 
 # indirection so tests can monkeypatch cheaply
@@ -162,8 +164,10 @@ def handle_new_file(pdf_path, conn, dirs, ocr_fallback, dry_run=False):
         date_part = (ident.doc_date.replace('-', '') if ident.doc_date
                      else f'{datetime.now().year}XXXX')
         base = ident.supplier_key.removesuffix('_nc')
-        park_dir = dirs.get('nao_fatura') or (Path(dirs['integrated']).parent
-                                              / 'QA' / 'Nao Fatura')
+        year = (ident.doc_date or f'{datetime.now().year}')[:4]
+        scansnap_root = Path(dirs['extracted']).parent if dirs.get('extracted') \
+            else Path(dirs['integrated']).parent
+        park_dir = scansnap_root / year / 'Outros Documentos fiscais'
         stem = f'{date_part}_{base.capitalize()}'
         dest = _unique_dest(Path(park_dir), stem)
         if dry_run:

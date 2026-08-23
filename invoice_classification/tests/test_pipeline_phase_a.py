@@ -210,16 +210,21 @@ RG_PAYLOAD = ('A:501141243*B:508179947*C:PT*D:RG*E:N*F:20260819*'
               'G:RMSS A146/308*H:JJD6YD9X-308*N:0.00*O:2125.73')
 
 
+GT_PAYLOAD = ('A:500099871*B:508179947*C:PT*D:GT*E:N*F:20260722*'
+              'G:GT 4G2026/1234*H:JFVGGGGG-1234*N:0.00*O:0.00')
+
+
 def test_rg_receipt_is_auto_parked(conn, dirs, tmp_path, monkeypatch):
-    # QR doc type RG = payment receipt, not an invoice: park it in
-    # QA/Nao Fatura without ever queueing an extraction
+    # QR doc type RG = payment receipt, not an invoice: park it under
+    # <ano>/Outros Documentos fiscais without ever queueing an extraction
     state.seed_suppliers(conn, {'garcias': ('501141243', 'Garcias')})
     monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [_hit(RG_PAYLOAD)])
     pdf = _pdf(tmp_path, 'recibo.pdf', b'%PDF rg-one')
     out = pipeline.handle_new_file(pdf, conn, dirs, ocr_fallback=None)
     assert out['action'] == 'NAO_FATURA'
     assert out['new_name'] == '20260819_Garcias.pdf'
-    parked = dirs['integrated'].parent / 'QA' / 'Nao Fatura' / '20260819_Garcias.pdf'
+    parked = (dirs['integrated'].parent / '2026' / 'Outros Documentos fiscais'
+              / '20260819_Garcias.pdf')
     assert parked.exists()
     row = state.find_by_md5(conn, pipeline.file_md5(parked))
     assert row['status'] == 'nao_fatura'
@@ -228,6 +233,17 @@ def test_rg_receipt_is_auto_parked(conn, dirs, tmp_path, monkeypatch):
     pdf2 = _pdf(tmp_path, 'recibo2.pdf', b'%PDF rg-one')
     out2 = pipeline.handle_new_file(pdf2, conn, dirs, ocr_fallback=None)
     assert out2['action'] == 'DUPLICATE'
+
+
+def test_gt_guia_is_auto_parked_by_doc_year(conn, dirs, tmp_path, monkeypatch):
+    state.seed_suppliers(conn, {'teofilo': ('500099871', 'Teofilo')})
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [_hit(GT_PAYLOAD)])
+    pdf = _pdf(tmp_path, 'guia.pdf', b'%PDF gt-one')
+    out = pipeline.handle_new_file(pdf, conn, dirs, ocr_fallback=None)
+    assert out['action'] == 'NAO_FATURA'
+    parked = (dirs['integrated'].parent / '2026' / 'Outros Documentos fiscais'
+              / '20260722_Teofilo.pdf')
+    assert parked.exists()
 
 
 def test_rg_dry_run_touches_nothing(conn, dirs, tmp_path, monkeypatch):
