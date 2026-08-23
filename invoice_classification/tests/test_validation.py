@@ -216,3 +216,16 @@ def test_ref_near_miss_accepted_when_atcud_confirms():
     q2 = dict(QR, G='COM_FAC_NOVOS_F12_AT 001/11361356', H='JF58YBPF-11361356')
     assert validate(dict(EXT, invoice_ref='2026/11361356'), q2,
                     'mscar')['checks']['ref_vs_qr']
+
+
+def test_reason_explains_failed_checks_with_values():
+    q = dict(QR, N='17.63')
+    v = validate(dict(EXT, iva_cents=298), q, 'novadis')
+    assert v['status'] == 'needs_review'
+    assert 'IVA' in v['reason'] and '2.98' in v['reason'] and '17.63' in v['reason']
+    v2 = validate(dict(EXT, invoice_ref='FT XX/999'), QR, 'novadis')
+    assert 'FT XX/999' in v2['reason'] and QR['G'] in v2['reason']
+    v3 = validate(EXT, None, 'novadis')
+    assert 'sem QR' in v3['reason']
+    # ok verdicts carry no reason
+    assert 'reason' not in validate(EXT, QR, 'novadis')

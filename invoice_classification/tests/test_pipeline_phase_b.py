@@ -49,7 +49,7 @@ def test_drain_happy_path_files_sends_writes(env):
                            poster=lambda u, b, h: posts.append(b) or {'result': {'id': 9}},
                            resolver=lambda remote: 'DRIVEID')
     assert stats == {'extracted': 1, 'sent': 1, 'needs_review': 0,
-                     'retried': 0, 'failed': 0}
+                     'retried': 0, 'failed': 0, 'approved': 0}
     row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
     assert row['status'] == 'sent'
     assert '/INTEGRATED/2026/03/' in row['current_path']
@@ -267,3 +267,73 @@ def test_no_qr_hold_without_date_keeps_name(conn, tmp_path, monkeypatch):
                    resolver=lambda remote: None)
     row = conn.execute("SELECT * FROM files WHERE id=?", (out['file_id'],)).fetchone()
     assert '2026XXXX_' in row['current_path'] and row['doc_date'] is None
+
+
+def _held_env(conn, tmp_path, monkeypatch, ext_overrides=None):
+    source = tmp_path / 'ScanSnap'
+    source.mkdir(exist_ok=True)
+    dirs = pipeline.dirs_for_source(source)
+    for p in dirs.values():
+        p.mkdir(parents=True, exist_ok=True)
+    state.seed_suppliers(conn, {'reichurrasco': ('515553565', 'Rei do Churrasco')})
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [])
+    src = source / 'scan01.pdf'
+    src.write_bytes(b'%PDF norqr')
+    out = pipeline.handle_new_file(src, conn, dirs, lambda p: ('reichurrasco', None))
+    ext = dict(GOOD_EXT, supplier_nif='515553565', date='2026-05-17',
+               **(ext_overrides or {}))
+    pipeline.drain(conn, dirs, ODOO, extractor=_extractor(ext),
+                   poster=lambda u, b, h: {'result': {}},
+                   resolver=lambda remote: None)
+    return dirs, out['file_id']
+
+
+def test_approval_marker_releases_held_invoice(conn, tmp_path, monkeypatch):
+    dirs, fid = _held_env(conn, tmp_path, monkeypatch)
+    row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+    assert row['status'] == 'needs_review'
+    marker = dirs['approved'] / f"{row['md5']}.json"
+    marker.write_text(json.dumps({
+        'md5': row['md5'], 'pdf': 'INTEGRATED/20260517_Reichurrasco.pdf',
+        'date': '2026-05-18', 'supplier': 'Reichurrasco',
+        'approved_at': '2026-08-24T10:00:00'}))
+    posts = []
+    stats = pipeline.drain(conn, dirs, ODOO, extractor=None,
+                           poster=lambda u, b, h: posts.append(b) or {'result': {'id': 5}},
+                           resolver=lambda remote: 'DRIVEID')
+    assert stats['approved'] == 1
+    row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+    assert row['status'] == 'sent'
+    # human-corrected date wins: filing folder and payload
+    assert '/INTEGRATED/2026/05/' in row['current_path']
+    assert posts[0]['emission_date'] == '2026-05-18'
+    assert not marker.exists()
+    art = json.loads((dirs['extracted'] / '20260517_Reichurrasco.json').read_text())
+    assert art['odoo']['status'] == 'sent'
+    assert any('aprovada manualmente' in n for n in art['validation']['notes'])
+
+
+def test_approval_marker_kept_on_transient_odoo_error(conn, tmp_path, monkeypatch):
+    dirs, fid = _held_env(conn, tmp_path, monkeypatch)
+    row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+    marker = dirs['approved'] / f"{row['md5']}.json"
+    marker.write_text(json.dumps({'md5': row['md5'],
+                                  'pdf': 'INTEGRATED/20260517_Reichurrasco.pdf'}))
+    def bad_poster(u, b, h):
+        raise OSError('down')
+    stats = pipeline.drain(conn, dirs, ODOO, extractor=None, poster=bad_poster,
+                           resolver=lambda remote: None)
+    assert stats['approved'] == 0
+    assert marker.exists()   # retried on the next tick
+    assert conn.execute("SELECT status FROM files WHERE id=?",
+                        (fid,)).fetchone()[0] == 'needs_review'
+
+
+def test_approval_marker_for_unknown_md5_is_dropped(conn, tmp_path, monkeypatch):
+    dirs, fid = _held_env(conn, tmp_path, monkeypatch)
+    marker = dirs['approved'] / 'ffff.json'
+    marker.write_text(json.dumps({'md5': 'ffff', 'pdf': 'INTEGRATED/x.pdf'}))
+    pipeline.drain(conn, dirs, ODOO, extractor=None,
+                   poster=lambda u, b, h: {'result': {}},
+                   resolver=lambda remote: None)
+    assert not marker.exists()

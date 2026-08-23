@@ -227,6 +227,7 @@ def dirs_for_source(source_dir):
         'review': source_dir / 'REVIEW',
         'duplicados': duplicados,
         'extracted': scansnap_root / 'EXTRACTED',
+        'approved': scansnap_root / 'APPROVED',
     }
 
 
@@ -261,6 +262,100 @@ def _default_extractor(pdf_path, supplier):
     return claude_extract.extract(pdf_path, supplier, api_key=cfg['api_key'])
 
 
+def _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats):
+    """Segunda aprovação vinda do QA_Faturas: consome marcadores
+    ScanSnap/APPROVED/<md5>.json escritos quando um humano marca OK uma
+    fatura retida. O gate é dispensado (a aprovação humana É a segunda
+    validação): a extração já guardada segue para o Odoo com as correções
+    do marcador (data/fornecedor), o PDF é arquivado em YYYY/MM e o
+    artefacto atualizado. Falha transitória mantém o marcador para o
+    próximo tick; marcadores órfãos são removidos com aviso."""
+    import json as _json
+
+    import artifacts
+    import claude_extract
+    import odoo_send
+    import validation as _validation  # noqa: F401 (parity of imports)
+
+    approved_dir = (dirs or {}).get('approved')
+    if not approved_dir or not Path(approved_dir).is_dir():
+        return
+    for marker in sorted(Path(approved_dir).glob('*.json')):
+        try:
+            mk = _json.loads(marker.read_text())
+        except (OSError, ValueError):
+            logger.warning('marcador de aprovação ilegível: %s', marker)
+            continue
+        row = state.find_by_md5(conn, mk.get('md5') or '')
+        ext_row = row and conn.execute(
+            "SELECT * FROM extractions WHERE file_id=?", (row['id'],)).fetchone()
+        if (row is None or row['status'] not in ('needs_review', 'failed')
+                or not ext_row or not ext_row['result_json']):
+            logger.warning('marcador de aprovação sem fatura retida '
+                           'correspondente (md5=%s); removido', mk.get('md5'))
+            marker.unlink(missing_ok=True)
+            continue
+        row_dirs = _dirs_for_row(row['current_path']) or dirs
+        result = claude_extract.Extraction.model_validate_json(ext_row['result_json'])
+        extraction = result.model_dump()
+        served_model = ext_row['model'] or claude_extract.MODEL
+        if mk.get('date'):
+            extraction['date'] = mk['date']
+        supplier_key = (mk.get('supplier') or row['supplier_key'] or '').lower()             or row['supplier_key']
+        # o QA pode ter renomeado o ficheiro no Drive
+        scansnap_root = Path(row_dirs['extracted']).parent
+        if mk.get('pdf') and (scansnap_root / mk['pdf']).exists():
+            new_path = scansnap_root / mk['pdf']
+            if str(new_path) != row['current_path']:
+                state.update_path(conn, row['id'], new_path)
+                row = state.find_by_md5(conn, mk['md5'])
+        verdict = {'status': 'ok', 'checks': {}, 'notes': []}
+        old_vj = ext_row['validation_json']
+        if old_vj:
+            verdict = _json.loads(old_vj)
+            verdict['status'] = 'ok'
+        verdict.setdefault('notes', []).append(
+            f"aprovada manualmente (QA) em {mk.get('approved_at') or ''}".strip())
+        try:
+            doc_date = mk.get('date') or row['doc_date'] or extraction.get('date')
+            if _in_month_dir(row['current_path']):
+                new_path = Path(row['current_path'])
+            else:
+                new_path = file_into_month(row['current_path'],
+                                           row_dirs['integrated'], doc_date)
+                state.update_path(conn, row['id'], new_path)
+                row = state.find_by_md5(conn, mk['md5'])
+            basename = new_path.stem
+            marker_rel = str(new_path)
+            m = '/ScanSnap/'
+            rel = marker_rel.split(m, 1)[1] if m in marker_rel else new_path.name
+            drive_id = resolver(f"{odoo_cfg['drive_remote']}/{rel}")
+            url = odoo_send.drive_preview_url(drive_id) if drive_id else None
+            payload_row = dict(row)
+            payload_row['supplier_key'] = supplier_key
+            payload = odoo_send.build_payload(payload_row, extraction,
+                                              document_url=url)
+            odoo_result = odoo_send.send(payload, odoo_cfg['webhook_url'],
+                                         odoo_cfg['api_key'], poster=poster)
+        except Exception as e:
+            logger.warning('aprovação %s: envio falhou (%s); marcador mantido '
+                           'para o próximo tick', mk.get('md5'), e)
+            continue
+        state.save_extraction(conn, row['id'], served_model,
+                              ext_row['result_json'], _json.dumps(verdict))
+        state.mark_sent(conn, row['id'], _json.dumps(odoo_result))
+        sent_row = conn.execute("SELECT odoo_sent_at FROM extractions WHERE"
+                                " file_id=?", (row['id'],)).fetchone()
+        art = artifacts.build_artifact(dict(row), _primary_qr(conn, row['id']),
+                                       extraction, verdict,
+                                       {'sent_at': sent_row['odoo_sent_at'],
+                                        'status': 'sent'},
+                                       served_model, ext_row['attempts'])
+        artifacts.write_json(row_dirs['extracted'], basename, art)
+        marker.unlink(missing_ok=True)
+        stats['approved'] += 1
+
+
 def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
           cap=5, dry_run=False):
     import claude_extract
@@ -270,7 +365,11 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
 
     extractor = extractor or _default_extractor
     resolver = resolver or odoo_send.resolve_drive_id
-    stats = {'extracted': 0, 'sent': 0, 'needs_review': 0, 'retried': 0, 'failed': 0}
+    stats = {'extracted': 0, 'sent': 0, 'needs_review': 0, 'retried': 0,
+             'failed': 0, 'approved': 0}
+
+    if not dry_run:
+        _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats)
 
     for row in state.pending(conn, cap=cap):
         fid = row['id']

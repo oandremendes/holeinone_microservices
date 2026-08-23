@@ -93,9 +93,14 @@ def validate(extraction, qr_fields, supplier_key):
             net_ok = abs(net_sum - net_target) <= TOL
     checks['soma_linhas'] = gross_ok or net_ok
 
+    def _eur(c):
+        return '—' if c is None else f'{c / 100:.2f}'
+
     if not qr_fields:
         notes.append('sem QR fiscal — validação impossível, retido')
-        return {'status': 'needs_review', 'checks': checks, 'notes': notes}
+        return {'status': 'needs_review', 'checks': checks, 'notes': notes,
+                'reason': 'sem QR fiscal — validação impossível; confirmar '
+                          'valores contra o papel'}
 
     base_key = (supplier_key or '').removesuffix('_nc')
     q_total = qr_cents(qr_fields.get('O'))
@@ -179,4 +184,21 @@ def validate(extraction, qr_fields, supplier_key):
                                        and _close(e_base + e_iva, e_doc)))
 
     status = 'ok' if all(checks.values()) else 'needs_review'
-    return {'status': status, 'checks': checks, 'notes': notes}
+    verdict = {'status': status, 'checks': checks, 'notes': notes}
+    if status != 'ok':
+        # razão legível para a segunda aprovação: o que discorda e os valores
+        why = {
+            'soma_linhas': f'soma das linhas {_eur(line_sum)} ≠ total '
+                           f'{_eur(gross_target)} (e soma líquida ≠ base)',
+            'total_vs_qr': f'total extraído {_eur(e_total)} ≠ QR {qr_fields.get("O")}',
+            'iva_vs_qr': f'IVA extraído {_eur(e_iva)} ≠ QR {qr_fields.get("N")}',
+            'ref_vs_qr': f'referência extraída {extraction.get("invoice_ref")!r}'
+                         f' ≠ QR {g!r}',
+            'date_vs_qr': f'data extraída {extraction.get("date")} ≠ QR '
+                          f'{qr_date(qr_fields)}',
+            'base_mais_iva': f'base {_eur(e_base)} + IVA {_eur(e_iva)} ≠ '
+                             f'total {_eur(e_total)}',
+        }
+        verdict['reason'] = '; '.join(why[k] for k, v in checks.items()
+                                      if not v and k in why)
+    return verdict
