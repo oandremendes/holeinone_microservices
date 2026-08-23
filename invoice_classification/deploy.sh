@@ -229,7 +229,13 @@ RCLONE_CONFIG="${RCLONE_CONFIG_DIR}/rclone.conf"
 
 mkdir -p "${RCLONE_CONFIG_DIR}"
 
-if [[ -f "${APP_DIR}/drivek.json" ]]; then
+# An existing OAuth-token config (owner account) always wins: service
+# accounts can no longer create files in a personal My Drive (403
+# storageQuotaExceeded), so once the remote is authorized as the owner the
+# deploy must never regress it back to the service account.
+if [[ -f "${RCLONE_CONFIG}" ]] && grep -q '^token *=' "${RCLONE_CONFIG}"; then
+    ok "rclone config preserved (OAuth token - owner account)"
+elif [[ -f "${APP_DIR}/drivek.json" ]]; then
     cat > "${RCLONE_CONFIG}" <<EOF
 [${GDRIVE_REMOTE_NAME}]
 type = drive
@@ -238,13 +244,21 @@ service_account_file = ${APP_DIR}/drivek.json
 EOF
     chown -R "${APP_USER}:${APP_USER}" "${RCLONE_CONFIG_DIR}"
     chmod 600 "${RCLONE_CONFIG}"
-    ok "rclone remote '${GDRIVE_REMOTE_NAME}' configured"
+    ok "rclone remote '${GDRIVE_REMOTE_NAME}' configured (service account)"
 else
     if [[ -f "${RCLONE_CONFIG}" ]]; then
         ok "rclone config preserved (existing, but drivek.json missing from source)"
     else
         warn "rclone not configured (drivek.json missing)"
     fi
+fi
+
+# --drive-shared-with-me only applies to the service-account setup (the
+# ScanSnap folder is merely shared with it); the owner account sees the
+# folder in its own My Drive and the flag would hide it.
+DRIVE_SHARED_FLAG=""
+if grep -q '^service_account_file' "${RCLONE_CONFIG}" 2>/dev/null; then
+    DRIVE_SHARED_FLAG=" --drive-shared-with-me"
 fi
 
 # Always attempt to clean up mount point (handles stale FUSE mounts)
@@ -346,8 +360,7 @@ User=${APP_USER}
 Group=${APP_USER}
 ExecStartPre=/bin/mkdir -p ${GDRIVE_MOUNT}
 ExecStart=/usr/bin/rclone mount ${GDRIVE_REMOTE_NAME}: ${GDRIVE_MOUNT} \\
-    --config ${RCLONE_CONFIG} \\
-    --drive-shared-with-me \\
+    --config ${RCLONE_CONFIG}${DRIVE_SHARED_FLAG} \\
     --vfs-cache-mode full \\
     --vfs-cache-max-age 1h \\
     --poll-interval 30s \\
