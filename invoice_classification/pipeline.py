@@ -294,6 +294,9 @@ def _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats):
             logger.warning('marcador de aprovação ilegível: %s', marker)
             continue
         row = state.find_by_md5(conn, mk.get('md5') or '')
+        if mk.get('action') == 'nao_fatura':
+            _retire_nao_fatura(conn, dirs, row, mk, marker, stats)
+            continue
         ext_row = row and conn.execute(
             "SELECT * FROM extractions WHERE file_id=?", (row['id'],)).fetchone()
         if (row is None or row['status'] not in ('needs_review', 'failed')
@@ -382,6 +385,39 @@ def _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats):
         stats['approved'] += 1
 
 
+def _retire_nao_fatura(conn, dirs, row, mk, marker, stats):
+    """QA julgou o documento "não é fatura": retira a row do fluxo (estado
+    terminal `nao_fatura`, nunca enviada ao Odoo) e move o PDF para fora,
+    por omissão para ScanSnap/QA/Nao Fatura/. Rows já enviadas nunca são
+    tocadas — o marcador órfão é removido com aviso."""
+    retirable = ('needs_review', 'failed', 'review_folder', 'queued', 'retry')
+    if row is None or row['status'] not in retirable:
+        logger.warning('marcador nao_fatura sem row retirável (md5=%s, '
+                       'status=%s); removido', mk.get('md5'),
+                       row['status'] if row else None)
+        marker.unlink(missing_ok=True)
+        return
+    row_dirs = _dirs_for_row(row['current_path']) or dirs
+    scansnap_root = Path(row_dirs['extracted']).parent
+    target_rel = mk.get('target') or f"QA/Nao Fatura/{Path(row['current_path']).name}"
+    target_dir = scansnap_root / Path(target_rel).parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+    src = Path(row['current_path'])
+    if src.exists():
+        dest = scansnap_root / target_rel
+        if dest.exists():
+            dest = _unique_dest(target_dir, dest.stem)
+        shutil.move(str(src), str(dest))
+    else:
+        # o QA (ou um humano) pode já ter movido o ficheiro
+        dest = scansnap_root / target_rel
+    conn.execute("UPDATE files SET status='nao_fatura', current_path=?"
+                 " WHERE id=?", (str(dest), row['id']))
+    conn.commit()
+    marker.unlink(missing_ok=True)
+    stats['retired'] += 1
+
+
 def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
           cap=5, dry_run=False):
     import claude_extract
@@ -392,7 +428,7 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
     extractor = extractor or _default_extractor
     resolver = resolver or odoo_send.resolve_drive_id
     stats = {'extracted': 0, 'sent': 0, 'needs_review': 0, 'retried': 0,
-             'failed': 0, 'approved': 0}
+             'failed': 0, 'approved': 0, 'retired': 0}
 
     if not dry_run:
         _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats)

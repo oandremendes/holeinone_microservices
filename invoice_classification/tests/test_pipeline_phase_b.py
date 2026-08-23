@@ -49,7 +49,7 @@ def test_drain_happy_path_files_sends_writes(env):
                            poster=lambda u, b, h: posts.append(b) or {'result': {'id': 9}},
                            resolver=lambda remote: 'DRIVEID')
     assert stats == {'extracted': 1, 'sent': 1, 'needs_review': 0,
-                     'retried': 0, 'failed': 0, 'approved': 0}
+                     'retried': 0, 'failed': 0, 'approved': 0, 'retired': 0}
     row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
     assert row['status'] == 'sent'
     assert '/INTEGRATED/2026/03/' in row['current_path']
@@ -364,3 +364,46 @@ def test_approval_marker_overrides_header_values(conn, tmp_path, monkeypatch):
     # unsupported keys are ignored gracefully and reported, not fatal
     assert 'lines' in notes and 'não suportad' in notes
     assert art['extraction']['iva_cents'] == 1763
+
+
+def test_nao_fatura_marker_retires_and_moves(conn, tmp_path, monkeypatch):
+    # QA judged the document "not an invoice": the pipeline retires the held
+    # row and moves the PDF out of the flow into ScanSnap/QA/Nao Fatura/
+    dirs, fid = _held_env(conn, tmp_path, monkeypatch)
+    row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+    marker = dirs['approved'] / f"{row['md5']}.json"
+    marker.write_text(json.dumps({
+        'action': 'nao_fatura', 'md5': row['md5'],
+        'pdf': 'INTEGRATED/20260517_Reichurrasco.pdf',
+        'target': 'QA/Nao Fatura/20260517_Reichurrasco.pdf'}))
+    posts = []
+    stats = pipeline.drain(conn, dirs, ODOO, extractor=None,
+                           poster=lambda u, b, h: posts.append(b) or {'result': {}},
+                           resolver=lambda remote: None)
+    assert stats['retired'] == 1 and not posts        # nothing goes to Odoo
+    row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+    assert row['status'] == 'nao_fatura'
+    assert row['current_path'].endswith('/QA/Nao Fatura/20260517_Reichurrasco.pdf')
+    source = tmp_path / 'ScanSnap'
+    assert (source / 'QA' / 'Nao Fatura' / '20260517_Reichurrasco.pdf').exists()
+    assert not (source / 'INTEGRATED' / '20260517_Reichurrasco.pdf').exists()
+    assert not marker.exists()
+
+
+def test_nao_fatura_marker_never_touches_sent_rows(env):
+    conn, dirs, fid = env
+    pipeline.drain(conn, dirs, ODOO, extractor=_extractor(GOOD_EXT),
+                   poster=lambda u, b, h: {'result': {}},
+                   resolver=lambda remote: None)
+    row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+    assert row['status'] == 'sent'
+    marker = dirs['approved'] / f"{row['md5']}.json"
+    marker.write_text(json.dumps({'action': 'nao_fatura', 'md5': row['md5'],
+                                  'pdf': 'x', 'target': 'QA/Nao Fatura/x.pdf'}))
+    stats = pipeline.drain(conn, dirs, ODOO, extractor=None,
+                           poster=lambda u, b, h: {'result': {}},
+                           resolver=lambda remote: None)
+    assert stats['retired'] == 0
+    assert conn.execute("SELECT status FROM files WHERE id=?",
+                        (fid,)).fetchone()[0] == 'sent'
+    assert not marker.exists()   # orphan dropped with a warning
