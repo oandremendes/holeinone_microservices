@@ -262,6 +262,13 @@ def _default_extractor(pdf_path, supplier):
     return claude_extract.extract(pdf_path, supplier, api_key=cfg['api_key'])
 
 
+# Campos de cabeçalho que uma aprovação humana pode corrigir; alargar aqui
+# à medida que aparecerem casos novos (linhas ficam para uma versão futura).
+_OVERRIDABLE_FIELDS = {'invoice_ref', 'total_cents', 'iva_cents', 'base_cents',
+                       'total_document_cents', 'total_vasilhame_cents',
+                       'due_date', 'customer_nif'}
+
+
 def _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats):
     """Segunda aprovação vinda do QA_Faturas: consome marcadores
     ScanSnap/APPROVED/<md5>.json escritos quando um humano marca OK uma
@@ -301,6 +308,17 @@ def _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats):
         served_model = ext_row['model'] or claude_extract.MODEL
         if mk.get('date'):
             extraction['date'] = mk['date']
+        # Correções decididas pelo humano na aprovação. Contrato aberto:
+        # chaves desconhecidas (ex.: futuras correções de linhas) são
+        # ignoradas com aviso, para versões antigas do serviço não
+        # rebentarem com marcadores novos.
+        applied, unsupported = [], []
+        for k, v in (mk.get('overrides') or {}).items():
+            if k in _OVERRIDABLE_FIELDS:
+                applied.append(f'{k} {extraction.get(k)}→{v}')
+                extraction[k] = v
+            else:
+                unsupported.append(k)
         supplier_key = (mk.get('supplier') or row['supplier_key'] or '').lower()             or row['supplier_key']
         # o QA pode ter renomeado o ficheiro no Drive
         scansnap_root = Path(row_dirs['extracted']).parent
@@ -316,6 +334,14 @@ def _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats):
             verdict['status'] = 'ok'
         verdict.setdefault('notes', []).append(
             f"aprovada manualmente (QA) em {mk.get('approved_at') or ''}".strip())
+        if applied:
+            verdict['notes'].append('valores corrigidos na aprovação: '
+                                    + ', '.join(applied))
+        if unsupported:
+            logger.warning('aprovação %s: overrides não suportados ignorados: %s',
+                           mk.get('md5'), unsupported)
+            verdict['notes'].append('overrides não suportados nesta versão '
+                                    '(ignorados): ' + ', '.join(unsupported))
         try:
             doc_date = mk.get('date') or row['doc_date'] or extraction.get('date')
             if _in_month_dir(row['current_path']):

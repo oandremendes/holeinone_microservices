@@ -337,3 +337,30 @@ def test_approval_marker_for_unknown_md5_is_dropped(conn, tmp_path, monkeypatch)
                    poster=lambda u, b, h: {'result': {}},
                    resolver=lambda remote: None)
     assert not marker.exists()
+
+
+def test_approval_marker_overrides_header_values(conn, tmp_path, monkeypatch):
+    # extraction misread the IVA (held: iva_vs_qr); the human resolves the
+    # correct values at approval time and they reach the Odoo payload
+    dirs, fid = _held_env(conn, tmp_path, monkeypatch)
+    row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+    marker = dirs['approved'] / f"{row['md5']}.json"
+    marker.write_text(json.dumps({
+        'md5': row['md5'], 'pdf': 'INTEGRATED/20260517_Reichurrasco.pdf',
+        'overrides': {'iva_cents': 1763, 'total_cents': 2061,
+                      'invoice_ref': 'FT 101/00093037',
+                      'lines': [{'not': 'supported yet'}]}}))
+    posts = []
+    stats = pipeline.drain(conn, dirs, ODOO, extractor=None,
+                           poster=lambda u, b, h: posts.append(b) or {'result': {}},
+                           resolver=lambda remote: None)
+    assert stats['approved'] == 1
+    assert posts[0]['vat_amount'] == 17.63
+    assert posts[0]['total_amount'] == 20.61
+    assert posts[0]['invoice_number'] == 'FT 101/00093037'
+    art = json.loads((dirs['extracted'] / '20260517_Reichurrasco.json').read_text())
+    notes = ' '.join(art['validation']['notes'])
+    assert 'corrigidos na aprova' in notes and 'iva_cents' in notes
+    # unsupported keys are ignored gracefully and reported, not fatal
+    assert 'lines' in notes and 'não suportad' in notes
+    assert art['extraction']['iva_cents'] == 1763
