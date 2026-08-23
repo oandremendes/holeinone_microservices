@@ -76,3 +76,20 @@ def test_legacy_upload_uses_real_supplier_key(conn, tmp_path, monkeypatch):
                          dirs['integrated'], upload=True, conn=conn, dirs_extra=dirs)
     assert len(called) == 1
     assert called[0][1] == 'teofilo'
+
+
+def test_run_drain_passes_scansnap_dirs_for_approvals(monkeypatch, tmp_path):
+    # the quiet-tick drain must still see ScanSnap/APPROVED markers: dirs
+    # are derived from the standard mount layout, not left as None
+    import classifier
+    (tmp_path / 'GoogleDrive' / 'ScanSnap').mkdir(parents=True)
+    monkeypatch.setattr(classifier.Path, 'home', staticmethod(lambda: tmp_path))
+    seen = {}
+
+    def fake_drain(conn, dirs, odoo_cfg, dry_run=False):
+        seen['dirs'] = dirs
+        return {}
+    monkeypatch.setattr(classifier.pipeline, 'drain', fake_drain)
+    classifier.run_drain()
+    assert seen['dirs'] is not None
+    assert seen['dirs']['approved'] == tmp_path / 'GoogleDrive' / 'ScanSnap' / 'APPROVED'

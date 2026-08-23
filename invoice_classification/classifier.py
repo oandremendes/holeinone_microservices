@@ -1515,8 +1515,14 @@ def run_drain(dry_run: bool = False) -> dict:
     """
     import api_config
     conn = state.connect(Path(__file__).parent / 'state.db')
+    # Approval/nao_fatura markers live in ScanSnap/APPROVED and must be
+    # consumed on every tick, including quiet ones with no new scans: derive
+    # the standard mount layout instead of passing dirs=None (per-row dirs
+    # continue to be derived inside the drain for filing).
+    scansnap = Path.home() / 'GoogleDrive' / 'ScanSnap'
+    dirs = pipeline.dirs_for_source(scansnap) if scansnap.is_dir() else None
     try:
-        stats = pipeline.drain(conn, None, api_config.get_odoo(), dry_run=dry_run)
+        stats = pipeline.drain(conn, dirs, api_config.get_odoo(), dry_run=dry_run)
     finally:
         conn.close()
     logger.info(f"Drain: {stats}")
