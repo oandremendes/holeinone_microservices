@@ -67,3 +67,13 @@ def test_resolve_drive_id_falls_back_to_owned_drive():
     assert odoo_send.resolve_drive_id('gdrive:ScanSnap/x.pdf', run=run) == 'OWNED42'
     assert len(calls) == 2
     assert '--drive-shared-with-me' not in calls[1]
+
+
+def test_invoice_type_makro_only():
+    # historical convention: everything is 'beverage' (webhook default, field
+    # omitted) except Makro, whose records are typed 'makro' (as Docupipe did)
+    p = odoo_send.build_payload(dict(FILE_ROW, supplier_key='makro'), dict(EXT))
+    assert p['invoice_type'] == 'makro'
+    p2 = odoo_send.build_payload(dict(FILE_ROW, supplier_key='makro_gas'), dict(EXT))
+    assert p2['invoice_type'] == 'makro'
+    assert 'invoice_type' not in odoo_send.build_payload(FILE_ROW, dict(EXT))

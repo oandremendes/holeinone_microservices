@@ -33,6 +33,7 @@ def build_payload(file_row, extraction, document_url=None):
     vendor = file_row.get('supplier_key')
     if not vendor:
         raise ValueError('fatura sem fornecedor (supplier_key)')
+    base_key = vendor.removesuffix('_nc').lower()
     vendor = vendor.removesuffix('_nc').capitalize()
     ref = extraction.get('invoice_ref')
     if not ref:
@@ -76,6 +77,11 @@ def build_payload(file_row, extraction, document_url=None):
         payload['total_document'] = _eur(extraction['total_document_cents'])
     if extraction.get('total_vasilhame_cents') is not None:
         payload['total_vasilhame'] = _eur(extraction['total_vasilhame_cents'])
+    # invoice_type: o webhook assume 'beverage' (convencao historica de todos
+    # os registos); a unica excecao real e a Makro, que o Docupipe tipificava
+    # 'makro' — o matching no Odoo trata ('beverage','makro') igualmente
+    if base_key in ('makro', 'makro_gas'):
+        payload['invoice_type'] = 'makro'
     return payload
 
 
