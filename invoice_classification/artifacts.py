@@ -11,6 +11,7 @@ def build_artifact(file_row, qr_fields, extraction, validation, odoo, model, att
     rel = path.split(marker, 1)[1] if marker in path else path
     return {
         'pdf': rel,
+        'md5': file_row.get('md5'),
         'processed_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'model': model,
         'attempts': attempts,

@@ -23,3 +23,15 @@ def test_build_artifact_shape():
     assert a['extraction'] == {'total_cents': 1}
     assert a['odoo']['status'] == 'sent'
     assert a['model'] == 'claude-opus-5' and a['attempts'] == 1
+
+
+def test_artifact_carries_md5():
+    # o md5 é a identidade estável do documento: o QA_Faturas emparelha
+    # artefacto <-> fatura por ele (nomes de ficheiro colidem)
+    import artifacts
+    art = artifacts.build_artifact(
+        {'current_path': '/x/ScanSnap/INTEGRATED/a.pdf', 'md5': 'abc123',
+         'supplier_key': 's', 'nif': None, 'doc_date': None, 'doc_type': None,
+         'id_source': 'qr'},
+        None, {}, {'status': 'ok'}, {'sent_at': None, 'status': None}, 'm', 1)
+    assert art['md5'] == 'abc123'
