@@ -21,6 +21,29 @@ PROMPT = (
 )
 
 
+# Restauração/cafés: não interessa o que se comeu — as linhas passam a ser o
+# resumo de IVA do talão, uma por taxa, com o nome que o Odoo emparelha.
+# Conjunto extensível: basta acrescentar a supplier_key aqui.
+MEAL_SUPPLIERS = {
+    'americansmash', 'anticapizzeria', 'apaisagem', 'bagga', 'beiramar',
+    'burgerking', 'butchers', 'dominos', 'eurolatina', 'goldenmarina',
+    'graziemille', 'gustozza', 'matchpoint', 'mcdonalds', 'mourapao',
+    'osakasushi', 'pizzahut', 'plate', 'prosaaromaticas', 'reichurrasco',
+    'sushimishi', 'sweetcup', 'tabernamodesto', 'tribulum', 'tuttapanna',
+    'zorba',
+}
+
+MEAL_PROMPT = (
+    'REGRA ESPECIAL (documento de restauração/café): NÃO extraias os artigos '
+    'individuais consumidos. Em lines produz exatamente uma linha por taxa de '
+    'IVA do quadro-resumo do talão, com description "Despesa Refeição 6%", '
+    '"Despesa Refeição 13%", "Despesa Refeição 23%" (conforme as taxas '
+    'presentes), quantity 1, line_net_cents = base dessa taxa, '
+    'line_total_cents = base + IVA dessa taxa, unit_price_eur = base em '
+    'euros, supplier_code null. O quadro taxes preenche-se na mesma como '
+    'impresso.'
+)
+
 # Instruções específicas por fornecedor (chave = supplier_key do QA, em minúsculas).
 # O esquema de saída é único; isto só orienta onde encontrar a informação.
 SUPPLIER_HINTS = {
@@ -99,9 +122,12 @@ def build_content(pdf_path, supplier=None):
     pdf_b64 = base64.standard_b64encode(Path(pdf_path).read_bytes()).decode()
     schema = Extraction.model_json_schema()
     prompt = PROMPT
-    hint = SUPPLIER_HINTS.get((supplier or '').lower().removesuffix('_nc'))
+    base_key = (supplier or '').lower().removesuffix('_nc')
+    hint = SUPPLIER_HINTS.get(base_key)
     if hint:
         prompt += f'\n\nNotas específicas deste fornecedor: {hint}'
+    if base_key in MEAL_SUPPLIERS:
+        prompt += f'\n\n{MEAL_PROMPT}'
     return [
         {'type': 'document',
          'source': {'type': 'base64', 'media_type': 'application/pdf',

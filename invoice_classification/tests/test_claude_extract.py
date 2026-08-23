@@ -94,3 +94,16 @@ def test_refusal_is_permanent(pdf):
     fake = FakeClient([FakeResponse('', stop_reason='refusal')])
     with pytest.raises(ce.PermanentExtractionError):
         ce.extract(pdf, client=fake)
+
+
+def test_meal_suppliers_get_aggregated_lines_prompt(tmp_path):
+    import claude_extract as ce
+    p = tmp_path / 'x.pdf'
+    p.write_bytes(b'%PDF meal')
+    meal = ce.build_content(str(p), 'reichurrasco')[1]['text']
+    assert 'Despesa Refei' in meal and 'uma linha por taxa' in meal
+    plain = ce.build_content(str(p), 'soares')[1]['text']
+    assert 'Despesa Refei' not in plain
+    # the _nc suffix does not defeat the category
+    nc = ce.build_content(str(p), 'reichurrasco_nc')[1]['text']
+    assert 'Despesa Refei' in nc
