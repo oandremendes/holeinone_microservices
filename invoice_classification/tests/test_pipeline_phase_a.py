@@ -204,3 +204,37 @@ def test_nc_suffix_not_doubled_when_key_already_ends_nc(conn, dirs, tmp_path, mo
     assert out['action'] == 'INTEGRATED'
     assert out['new_name'].count('_nc') == 1
     assert out['new_name'] == '20260315_Novadis_nc.pdf'
+
+
+RG_PAYLOAD = ('A:501141243*B:508179947*C:PT*D:RG*E:N*F:20260819*'
+              'G:RMSS A146/308*H:JJD6YD9X-308*N:0.00*O:2125.73')
+
+
+def test_rg_receipt_is_auto_parked(conn, dirs, tmp_path, monkeypatch):
+    # QR doc type RG = payment receipt, not an invoice: park it in
+    # QA/Nao Fatura without ever queueing an extraction
+    state.seed_suppliers(conn, {'garcias': ('501141243', 'Garcias')})
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [_hit(RG_PAYLOAD)])
+    pdf = _pdf(tmp_path, 'recibo.pdf', b'%PDF rg-one')
+    out = pipeline.handle_new_file(pdf, conn, dirs, ocr_fallback=None)
+    assert out['action'] == 'NAO_FATURA'
+    assert out['new_name'] == '20260819_Garcias.pdf'
+    parked = dirs['integrated'].parent / 'QA' / 'Nao Fatura' / '20260819_Garcias.pdf'
+    assert parked.exists()
+    row = state.find_by_md5(conn, pipeline.file_md5(parked))
+    assert row['status'] == 'nao_fatura'
+    assert state.pending(conn) == []
+    # a rescan of the same receipt is a plain duplicate
+    pdf2 = _pdf(tmp_path, 'recibo2.pdf', b'%PDF rg-one')
+    out2 = pipeline.handle_new_file(pdf2, conn, dirs, ocr_fallback=None)
+    assert out2['action'] == 'DUPLICATE'
+
+
+def test_rg_dry_run_touches_nothing(conn, dirs, tmp_path, monkeypatch):
+    state.seed_suppliers(conn, {'garcias': ('501141243', 'Garcias')})
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [_hit(RG_PAYLOAD)])
+    pdf = _pdf(tmp_path, 'recibo.pdf', b'%PDF rg-dry')
+    out = pipeline.handle_new_file(pdf, conn, dirs, ocr_fallback=None, dry_run=True)
+    assert out['action'] == 'NAO_FATURA' and out['file_id'] is None
+    assert pdf.exists()
+    assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 0

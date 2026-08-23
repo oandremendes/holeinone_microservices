@@ -13,6 +13,11 @@ import state
 
 logger = logging.getLogger('invoice_classifier')
 
+# Tipos de documento fiscais (QR campo D) que NÃO são faturas e nunca devem
+# ir ao Odoo: são parqueados em QA/Nao Fatura logo na identificação, sem
+# gastar uma extração. Extensível (ex.: 'GR'/'GT' guias, se se quiser).
+NON_INVOICE_DOC_TYPES = {'RG'}   # RG = recibo de pagamento
+
 
 # indirection so tests can monkeypatch cheaply
 def qr_decode(pdf_path):
@@ -150,6 +155,35 @@ def handle_new_file(pdf_path, conn, dirs, ocr_fallback, dry_run=False):
                 old_dest = _unique_dest(dirs['duplicados'], old_path.stem)
                 shutil.move(str(old_path), str(old_dest))
                 state.update_path(conn, original['id'], old_dest)
+
+    if ident.id_source == 'qr' and ident.doc_type in NON_INVOICE_DOC_TYPES:
+        # recibo/da mesma família: parquear com o nome normalizado, registar
+        # a identidade (dedup em rescans) e nunca entrar na fila de extração
+        date_part = (ident.doc_date.replace('-', '') if ident.doc_date
+                     else f'{datetime.now().year}XXXX')
+        base = ident.supplier_key.removesuffix('_nc')
+        park_dir = dirs.get('nao_fatura') or (Path(dirs['integrated']).parent
+                                              / 'QA' / 'Nao Fatura')
+        stem = f'{date_part}_{base.capitalize()}'
+        dest = _unique_dest(Path(park_dir), stem)
+        if dry_run:
+            logger.info('[DRY RUN] would park %s -> %s (%s, doc D=%s)',
+                        pdf_path, dest, 'NAO_FATURA', ident.doc_type)
+            return {'action': 'NAO_FATURA', 'new_name': dest.name,
+                    'file_id': None}
+        Path(park_dir).mkdir(parents=True, exist_ok=True)
+        shutil.move(str(pdf_path), str(dest))
+        fid = state.insert_file(conn, md5=md5, original_name=pdf_path.name,
+                                current_path=str(dest), nif=ident.nif,
+                                atcud=ident.atcud, doc_ref=ident.doc_ref,
+                                supplier_key=ident.supplier_key or None,
+                                doc_date=ident.doc_date,
+                                doc_type=ident.doc_type,
+                                id_source=ident.id_source, status='nao_fatura')
+        for i, hit in enumerate(ident.qr_hits):
+            state.add_qr(conn, fid, hit.page, hit.raw, hit.fields,
+                         is_primary=(i == 0))
+        return {'action': 'NAO_FATURA', 'new_name': dest.name, 'file_id': fid}
 
     if ident.supplier_key != 'unknown':
         date_part = (ident.doc_date.replace('-', '') if ident.doc_date

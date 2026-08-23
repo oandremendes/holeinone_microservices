@@ -1465,7 +1465,8 @@ def process_and_move(
                     dry_run=dry_run)
                 action = out['action']
                 key = {'INTEGRATED': 'integrated', 'SUPERSEDE': 'integrated',
-                       'REVIEW': 'review', 'DUPLICATE': 'duplicate'}[action]
+                       'REVIEW': 'review', 'DUPLICATE': 'duplicate',
+                       'NAO_FATURA': 'nao_fatura'}[action]
                 stats[key] = stats.get(key, 0) + 1
                 stats['files'].append({'original': pdf_path.name,
                                        'new_name': out['new_name'], 'action': action})
