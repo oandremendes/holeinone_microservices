@@ -318,6 +318,24 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
 
         if verdict['status'] != 'ok':
             state.set_status(conn, fid, 'needs_review')
+            # Sem QR o documento fica retido para segunda aprovação manual;
+            # se a extração leu a data, prefixa-a no nome (2026XXXX_ ->
+            # YYYYMMDD_) e guarda doc_date, para a fila de QA ficar
+            # organizada por data. Retenções COM QR nunca são renomeadas.
+            ext_date = extraction.get('date')
+            if (qr_fields is None and not row['doc_date'] and ext_date
+                    and re.fullmatch(r'\d{4}-\d{2}-\d{2}', ext_date)
+                    and re.match(r'\d{4}XXXX_', basename)):
+                old_path = Path(row['current_path'])
+                stem = ext_date.replace('-', '') + basename[8:]
+                dest = _unique_dest(old_path.parent, stem)
+                shutil.move(str(old_path), str(dest))
+                conn.execute("UPDATE files SET current_path=?, doc_date=?"
+                             " WHERE id=?", (str(dest), ext_date, fid))
+                conn.commit()
+                row = conn.execute("SELECT * FROM files WHERE id=?",
+                                   (fid,)).fetchone()
+                basename = dest.stem
             stats['needs_review'] += 1
             art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
                                            {'sent_at': None, 'status': 'held'},

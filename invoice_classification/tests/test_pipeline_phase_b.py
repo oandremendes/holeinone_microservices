@@ -208,3 +208,62 @@ def test_artifact_name_follows_filed_pdf_name(conn, tmp_path, monkeypatch):
     a2 = json.loads((dirs['extracted'] / '20260315_Novadis_1.json').read_text())
     assert a1['pdf'].endswith('2026/03/20260315_Novadis.pdf')
     assert a2['pdf'].endswith('2026/03/20260315_Novadis_1.pdf')
+
+
+def test_no_qr_hold_prefills_extracted_date(conn, tmp_path, monkeypatch):
+    # No decodable QR: the invoice is held for manual (second) approval, but
+    # when the extraction read a date the file is renamed 2026XXXX_ ->
+    # YYYYMMDD_ and doc_date stored, so the QA queue is organized by date.
+    source = tmp_path / 'ScanSnap'
+    source.mkdir()
+    dirs = pipeline.dirs_for_source(source)
+    for p in dirs.values():
+        p.mkdir(parents=True, exist_ok=True)
+    state.seed_suppliers(conn, {'reichurrasco': ('515553565', 'Rei do Churrasco')})
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [])
+    src = source / 'scan01.pdf'
+    src.write_bytes(b'%PDF norqr')
+    out = pipeline.handle_new_file(src, conn, dirs, lambda p: ('reichurrasco', None))
+    assert out['new_name'].startswith('2026XXXX_')
+    ext = dict(GOOD_EXT, supplier_nif='515553565', date='2026-05-17')
+    stats = pipeline.drain(conn, dirs, ODOO, extractor=_extractor(ext),
+                           poster=lambda u, b, h: {'result': {}},
+                           resolver=lambda remote: None)
+    assert stats['needs_review'] == 1
+    row = conn.execute("SELECT * FROM files WHERE id=?", (out['file_id'],)).fetchone()
+    assert row['status'] == 'needs_review'
+    assert row['doc_date'] == '2026-05-17'
+    assert row['current_path'].endswith('/INTEGRATED/20260517_Reichurrasco.pdf')
+    # the artifact follows the new name
+    assert (dirs['extracted'] / '20260517_Reichurrasco.json').exists()
+    # a QR-carrying hold (validation mismatch) is never renamed
+    src2 = source / 'scan02.pdf'
+    src2.write_bytes(b'%PDF y')
+    monkeypatch.setattr(pipeline, 'qr_decode',
+                        lambda p: [QrHit(1, PAYLOAD, parse_payload(PAYLOAD))])
+    out2 = pipeline.handle_new_file(src2, conn, dirs, None)
+    bad = dict(GOOD_EXT, total_cents=99999, date='2026-03-16')
+    pipeline.drain(conn, dirs, ODOO, extractor=_extractor(bad),
+                   poster=lambda u, b, h: {'result': {}},
+                   resolver=lambda remote: None)
+    row2 = conn.execute("SELECT * FROM files WHERE id=?", (out2['file_id'],)).fetchone()
+    assert row2['current_path'].endswith(out2['new_name'])
+
+
+def test_no_qr_hold_without_date_keeps_name(conn, tmp_path, monkeypatch):
+    source = tmp_path / 'ScanSnap'
+    source.mkdir()
+    dirs = pipeline.dirs_for_source(source)
+    for p in dirs.values():
+        p.mkdir(parents=True, exist_ok=True)
+    state.seed_suppliers(conn, {'reichurrasco': ('515553565', 'Rei do Churrasco')})
+    monkeypatch.setattr(pipeline, 'qr_decode', lambda p: [])
+    src = source / 'scan01.pdf'
+    src.write_bytes(b'%PDF norqr')
+    out = pipeline.handle_new_file(src, conn, dirs, lambda p: ('reichurrasco', None))
+    ext = dict(GOOD_EXT, date=None)
+    pipeline.drain(conn, dirs, ODOO, extractor=_extractor(ext),
+                   poster=lambda u, b, h: {'result': {}},
+                   resolver=lambda remote: None)
+    row = conn.execute("SELECT * FROM files WHERE id=?", (out['file_id'],)).fetchone()
+    assert '2026XXXX_' in row['current_path'] and row['doc_date'] is None
