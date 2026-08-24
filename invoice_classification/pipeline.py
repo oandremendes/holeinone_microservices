@@ -414,6 +414,8 @@ def _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats):
         sent_row = conn.execute("SELECT odoo_sent_at FROM extractions WHERE"
                                 " file_id=?", (row['id'],)).fetchone()
         odoo_art = {'sent_at': sent_row['odoo_sent_at'], 'status': 'sent'}
+        if odoo_result.get('invoice_id'):
+            odoo_art['invoice_id'] = odoo_result['invoice_id']
         if odoo_result.get('products_unknown') is not None:
             odoo_art['products_unknown'] = odoo_result['products_unknown']
         art = artifacts.build_artifact(dict(row), _primary_qr(conn, row['id']),
@@ -581,6 +583,8 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
         sent_row = conn.execute("SELECT odoo_sent_at FROM extractions WHERE"
                                 " file_id=?", (fid,)).fetchone()
         odoo_art = {'sent_at': sent_row['odoo_sent_at'], 'status': 'sent'}
+        if odoo_result.get('invoice_id'):
+            odoo_art['invoice_id'] = odoo_result['invoice_id']
         if odoo_result.get('products_unknown') is not None:
             odoo_art['products_unknown'] = odoo_result['products_unknown']
         art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
