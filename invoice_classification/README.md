@@ -7,9 +7,13 @@ Automated invoice processing for scanned documents from ScanSnap ix-1600. Identi
 - **QR-First Identification**: Reads the Portuguese e-Fatura QR code (via `zxing-cpp`) as the primary identification signal, with Tesseract OCR/NIF/keyword matching as fallback when no QR code is present or decodable
 - **Claude Extraction**: Structured invoice data (supplier, date, totals, line items) is extracted by Claude (`claude-opus-5`) instead of the legacy OCR APIs
 - **SQLite Retry Queue**: Extraction and delivery failures are queued in `state.db` and retried automatically, capped at 5 attempts before being marked permanently failed
-- **QR-Gated Odoo Delivery**: Only invoices successfully identified via QR are sent on to Odoo as draft bills; everything else is held back for review
+- **QR-Gated Odoo Delivery**: Only invoices whose extraction agrees with the fiscal QR (totals/IVA ±2c, reference confirmed by the ATCUD, date, line sums, base+IVA consistency, per-supplier quirk table) are sent to Odoo as draft bills — with `document_url` (Drive preview) filled at processing time. Everything else is **held with a human-readable reason** (`validation.reason`) for second approval
+- **Second Approval loop (QA_Faturas)**: held invoices surface in the QA_Faturas queue; a human OK writes a `ScanSnap/APPROVED/<md5>.json` marker that the next 5-minute tick consumes — the stored extraction (plus any header `overrides` the human resolved: ref, totals, base — open contract in `pipeline._OVERRIDABLE_FIELDS`) goes to Odoo without re-extraction. A `nao_fatura` marker instead retires the row and moves the PDF to `ScanSnap/QA/Nao Fatura/`
+- **Meal receipts**: restaurants/cafés (`claude_extract.MEAL_SUPPLIERS`) extract lines as the receipt's IVA summary — one line per rate named `Despesa Refeição 6%/13%/23%` (the products Odoo matches) — instead of the individual items
+- **Non-invoice documents**: QR doc types RG (recibos), GR/GT (guias) are auto-parked into `ScanSnap/<ano>/Outros Documentos fiscais/` at identification time — no extraction, no Odoo, dedup still applies
+- **No-QR date prefill**: documents held for lacking a readable QR are renamed `2026XXXX_` → `YYYYMMDD_` from the extracted date, so the manual queue sorts by real dates
 - **JSON Artifacts**: Every processed invoice writes its extracted data to `EXTRACTED/*.json` alongside the PDF for auditability
-- **Date-Based Filing**: Integrated invoices are filed under `INTEGRATED/YYYY/MM/` by invoice date
+- **Date-Based Filing**: `INTEGRATED/YYYY/MM/` is the **single canonical archive** — machine-validated, human-approved and QA_Faturas-reviewed invoices all file there by invoice date
 - **Dedup with Supersede**: Duplicate detection by md5 hash and QR payload; a re-scanned invoice supersedes the previously queued/sent record instead of creating a duplicate entry
 - **Legacy APIs Neutralized**: Parseur and Docupipe integrations are preserved in code but disabled by default; re-enable via `legacy_apis.enabled` in `config.json`
 - **File Organization**: Renames files to `YYYYMMDD_Supplier.pdf` and moves to appropriate folders
@@ -30,6 +34,8 @@ Known suppliers are seeded into the `state.db` supplier registry (NIF → key); 
 | Justdrinks | 508976464 | Beer/Beverages |
 | Novadis | 504350900 | Beer (Heineken/Guinness) |
 | Absolutly Vintage | 516001906 | Spirits |
+
+Restaurant/café/snack suppliers listed in `claude_extract.MEAL_SUPPLIERS` get the per-rate `Despesa Refeição` extraction (add a key there to enrol a new one). Supplier hints live in `claude_extract.SUPPLIER_HINTS`; IVA quirks (Teófilo doubled-N, Oriental/Semino/GoldenMarina base-in-N) in `validation.IVA_QUIRKS`.
 
 ### Receipts
 
@@ -226,13 +232,19 @@ Each scan folder gets `INTEGRATED/` (filed into `YYYY/MM/` after validation), `R
 Phase A — per new PDF at the top level of a scan folder:
 1. **md5 dedup**: Exact rescans go to `Duplicados/` (a rescan of a failed/unidentified original supersedes it instead)
 2. **QR decode**: All fiscal QRs (Portaria 195/2020) are read; supplier by NIF, date from field F, `_nc` from D, identity dedup on (NIF, ATCUD)
-3. **OCR fallback**: When no QR decodes, the Tesseract pipeline (NIF substring, keywords, templates, date regexes) identifies the file
-4. **File + enqueue**: Identified files are renamed `YYYYMMDD_Supplier[_nc].pdf`, moved to `INTEGRATED/` and queued; unknown files go to `REVIEW/`
+3. **Non-invoice park**: QR doc types RG/GR/GT (`pipeline.NON_INVOICE_DOC_TYPES`) go straight to `<ano>/Outros Documentos fiscais/` — recorded for dedup, never extracted
+4. **OCR fallback**: When no QR decodes, the Tesseract pipeline (NIF substring, keywords, templates, date regexes) identifies the file
+5. **File + enqueue**: Identified files are renamed `YYYYMMDD_Supplier[_nc].pdf`, moved to `INTEGRATED/` and queued; unknown files go to `REVIEW/`
 
-Phase B — every run, for each queued/retry row (attempts < 5):
-1. **Claude extraction**: Whole PDF, structured line items in integer cents
-2. **Validation gate**: total/IVA vs QR (±2c, supplier quirk table), invoice ref, date, and line-sum checks
-3. **Delivery**: Pass → file into `INTEGRATED/YYYY/MM/`, write `EXTRACTED/<name>.json`, POST to Odoo. Fail → JSON written, held as `needs_review`. Transient errors retry on later runs
+Phase B — every run (including quiet ticks):
+0. **Approval markers**: `ScanSnap/APPROVED/*.json` from QA_Faturas are consumed first — `action: ok` sends the stored extraction (with the human's header `overrides`) to Odoo, gate bypassed; `action: nao_fatura` retires the row and moves the PDF to `QA/Nao Fatura/`. Transient Odoo failures keep the marker for the next tick
+1. **Claude extraction**: Whole PDF, structured line items in integer cents; meal suppliers get per-rate `Despesa Refeição` lines; Makro payloads carry `invoice_type: makro`
+2. **Validation gate**: total/IVA vs QR (±2c, quirk table), reference (exact, token-based, or ATCUD-confirmed near-miss), date, line sums (rounding-tolerant), base+IVA consistency
+3. **Delivery**: Pass → file into `INTEGRATED/YYYY/MM/`, write `EXTRACTED/<name>.json` (carries `md5` and, when held, a human-readable `validation.reason`), POST to Odoo with the Drive `document_url`. Fail → JSON written, held as `needs_review` for second approval in QA_Faturas; no-QR holds get the extracted date prefilled into the filename. Transient errors retry on later runs
+
+The `EXTRACTED/` artifacts double as the **integration channel with QA_Faturas**
+(which reads them at startup, pairs by md5, and surfaces held invoices in its
+review queue), and `APPROVED/` is the return channel for human decisions.
 
 ## OCR Fallback Classification Methods
 
@@ -261,28 +273,28 @@ Edit `classifier.py` and add to `SUPPLIERS` dict:
 
 The classifier integrates with ScanSnap via Google Drive using rclone. ScanSnap saves scans to Google Drive, rclone mounts the drive locally, and the classifier processes files directly.
 
-### Setup rclone with Service Account (works on headless servers)
+### Drive authentication: use the OWNER's OAuth token
 
-1. **Create Google Cloud Service Account**:
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create project → Enable Google Drive API
-   - Create Service Account → Download JSON key
-   - Save key as `drivek.json` (excluded from git)
+**Google no longer lets service accounts create files in a personal My Drive**
+(`403 storageQuotaExceeded`) — a service-account mount can move/rename PDFs but
+every NEW file (the `EXTRACTED/*.json` artifacts) fails to upload and rots in
+the VFS cache. Production therefore authenticates as the Drive **owner**:
 
-2. **Share Google Drive folder** with the service account email (Editor access)
-
-3. **Install and configure rclone**:
-   ```bash
-   sudo apt install rclone
-
-   # Configure with service account
-   rclone config create gdrive drive service_account_file /path/to/drivek.json
+1. On any machine with a browser: `rclone authorize "drive"` (log in as the
+   account that owns ScanSnap, e.g. info@…) and copy the token JSON.
+2. On the VPS, write `/home/invclassificator/.config/rclone/rclone.conf`:
+   ```ini
+   [gdrive]
+   type = drive
+   scope = drive
+   token = {"access_token":"...","refresh_token":"...",...}
    ```
+   then `systemctl restart rclone-gdrive-invclassificator`.
 
-4. **Test connection**:
-   ```bash
-   rclone lsd gdrive: --drive-shared-with-me
-   ```
+`deploy.sh` **never overwrites a token config** with the service-account one,
+and only adds `--drive-shared-with-me` to the mount unit for service-account
+setups (the owner sees ScanSnap in its own My Drive; the flag would hide it).
+The legacy service-account setup (`drivek.json`) still works read/move-only:
 
 5. **Create systemd service for auto-mount** (`~/.config/systemd/user/rclone-gdrive.service`):
    ```ini
