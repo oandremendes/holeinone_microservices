@@ -1,7 +1,7 @@
 # Product matching: automation + verification — design
 
 Date: 2026-08-24
-Status: **phases 1+2 implemented locally 2026-08-24** (addons-hio 22477c9; 98 tests green; snapshot: backfill 671/761, pending 204→105). **Phase 3 implemented** (pipeline c98134e + QA_Faturas 96a3ece). NOT deployed.
+Status: **phases 1+2 implemented locally 2026-08-24** (addons-hio 22477c9; 98 tests green; snapshot: backfill 671/761, pending 204→105). **Phase 3 implemented** (pipeline c98134e + QA_Faturas 96a3ece). **Phase 4 implemented** (addons-hio 0514584: claude-origin price arithmetic; fuzzy guardrail already in the cascade). Odoo-side commits NOT deployed.
 Repos touched: `addons-hio/hio_purchase_management` (main), `invoice_classification` + `QA_Faturas` (phase 3 only)
 
 ## Problem (owner's words)

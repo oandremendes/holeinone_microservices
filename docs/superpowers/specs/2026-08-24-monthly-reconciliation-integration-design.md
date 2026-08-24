@@ -1,7 +1,7 @@
 # Monthly Reconciliation ⇄ pipeline/QA_Faturas integration — proposal
 
 Date: 2026-08-24
-Status: **phase 1 implemented locally 2026-08-24** (addons-hio 4e53b9f + invoice_classification c98134e; tests green; NOT deployed). Phases 0/2/3 pending.
+Status: **phases 1+2+3 implemented 2026-08-24** — 1: addons-hio 4e53b9f (local, NOT deployed); 2+3: QA_Faturas 2559642 (odoo_rpc.json pull + confirmations) + invoice_classification 8395e0c (artifact invoice_id). Phase 0 (upload 2026 CSVs) remains the owner's step.
 
 ## Context (verified 2026-08-24)
 
