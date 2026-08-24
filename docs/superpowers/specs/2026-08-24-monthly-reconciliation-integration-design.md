@@ -1,8 +1,7 @@
 # Monthly Reconciliation ⇄ pipeline/QA_Faturas integration — proposal
 
 Date: 2026-08-24
-Status: **proposal — discussed, not yet approved** (phases below are staged so
-each can be approved independently)
+Status: **phase 1 implemented locally 2026-08-24** (addons-hio 4e53b9f + invoice_classification c98134e; tests green; NOT deployed). Phases 0/2/3 pending.
 
 ## Context (verified 2026-08-24)
 
