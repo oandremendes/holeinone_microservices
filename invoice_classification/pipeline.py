@@ -413,10 +413,11 @@ def _process_approvals(conn, dirs, odoo_cfg, poster, resolver, stats):
         state.mark_sent(conn, row['id'], _json.dumps(odoo_result))
         sent_row = conn.execute("SELECT odoo_sent_at FROM extractions WHERE"
                                 " file_id=?", (row['id'],)).fetchone()
+        odoo_art = {'sent_at': sent_row['odoo_sent_at'], 'status': 'sent'}
+        if odoo_result.get('products_unknown') is not None:
+            odoo_art['products_unknown'] = odoo_result['products_unknown']
         art = artifacts.build_artifact(dict(row), _primary_qr(conn, row['id']),
-                                       extraction, verdict,
-                                       {'sent_at': sent_row['odoo_sent_at'],
-                                        'status': 'sent'},
+                                       extraction, verdict, odoo_art,
                                        served_model, ext_row['attempts'])
         artifacts.write_json(row_dirs['extracted'], basename, art)
         marker.unlink(missing_ok=True)
@@ -579,10 +580,11 @@ def drain(conn, dirs, odoo_cfg, extractor=None, poster=None, resolver=None,
         state.mark_sent(conn, fid, json.dumps(odoo_result))
         sent_row = conn.execute("SELECT odoo_sent_at FROM extractions WHERE"
                                 " file_id=?", (fid,)).fetchone()
+        odoo_art = {'sent_at': sent_row['odoo_sent_at'], 'status': 'sent'}
+        if odoo_result.get('products_unknown') is not None:
+            odoo_art['products_unknown'] = odoo_result['products_unknown']
         art = artifacts.build_artifact(dict(row), qr_fields, extraction, verdict,
-                                       {'sent_at': sent_row['odoo_sent_at'],
-                                        'status': 'sent'},
-                                       served_model, attempts)
+                                       odoo_art, served_model, attempts)
         artifacts.write_json(row_dirs['extracted'], basename, art)
         stats['sent'] += 1
     return stats

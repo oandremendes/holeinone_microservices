@@ -77,3 +77,11 @@ def test_invoice_type_makro_only():
     p2 = odoo_send.build_payload(dict(FILE_ROW, supplier_key='makro_gas'), dict(EXT))
     assert p2['invoice_type'] == 'makro'
     assert 'invoice_type' not in odoo_send.build_payload(FILE_ROW, dict(EXT))
+
+
+def test_payload_carries_atcud():
+    # the ATCUD (QR field H) is the deterministic join key with Odoo's
+    # Monthly Reconciliation lines (at_code) — reconciliation phase 1
+    p = odoo_send.build_payload(dict(FILE_ROW, atcud='JFZ4PTHN-011485'), dict(EXT))
+    assert p['atcud'] == 'JFZ4PTHN-011485'
+    assert 'atcud' not in odoo_send.build_payload(dict(FILE_ROW), dict(EXT))

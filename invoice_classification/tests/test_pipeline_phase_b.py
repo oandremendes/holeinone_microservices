@@ -407,3 +407,17 @@ def test_nao_fatura_marker_never_touches_sent_rows(env):
     assert conn.execute("SELECT status FROM files WHERE id=?",
                         (fid,)).fetchone()[0] == 'sent'
     assert not marker.exists()   # orphan dropped with a warning
+
+
+def test_artifact_carries_products_unknown(env):
+    # Odoo's webhook (product matching v2) reports how many line products
+    # remain unmapped — the artifact carries it into the QA_Faturas badge
+    conn, dirs, fid = env
+    pipeline.drain(conn, dirs, ODOO, extractor=_extractor(GOOD_EXT),
+                   poster=lambda u, b, h: {'result': {
+                       'status': 'success', 'invoice_id': 9,
+                       'products_unknown': 2}},
+                   resolver=lambda remote: None)
+    art = json.loads((dirs['extracted'] / '20260315_Novadis.json').read_text())
+    assert art['odoo']['status'] == 'sent'
+    assert art['odoo']['products_unknown'] == 2

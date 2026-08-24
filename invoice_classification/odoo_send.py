@@ -66,6 +66,7 @@ def build_payload(file_row, extraction, document_url=None):
         } for t in taxes],
     }
     optional = {
+        'atcud': file_row.get('atcud'),
         'customer_NIF': extraction.get('customer_nif'),
         'emission_date': extraction.get('date'),
         'expiration_date': extraction.get('due_date'),
